@@ -18,49 +18,12 @@
   var TREE = [
     { label: 'Agent', children: [
       { label: '什么是 AI Agent', href: 'agent/what-is-agent.html' },
-      { label: '核心组件', children: [
-        { label: 'LLM 核心', href: 'agent/core/llm.html' },
-        { label: '工具系统', href: 'agent/core/tools.html' },
-        { label: '记忆与状态', href: 'agent/core/memory.html' },
-        { label: '规划与决策', href: 'agent/core/planning.html' }
-      ] },
       { label: '范式', children: [
         { label: 'ReAct', href: 'agent/patterns/react.html' },
         { label: 'Plan-and-Execute', href: 'agent/patterns/plan-execute.html' },
         { label: 'CoT · ToT · GoT', href: 'agent/patterns/reasoning.html' },
         { label: 'Reflection', href: 'agent/patterns/reflection.html' },
         { label: 'LLM任务拆分', href: 'agent/patterns/tasksplit.html' }
-      ] },
-      { label: 'multi-agent', children: [
-        { label: 'Handoff', href: 'agent/multi-agent/handoff.html' },
-        { label: 'Orchestrator-Workers', href: 'agent/multi-agent/orchestrator-workers.html' },
-        { label: 'Multi-agent Debate', href: 'agent/multi-agent/debate.html' }
-      ] },
-      { label: '工程实践', children: [
-        { label: '记忆压缩', href: 'agent/engineering/memory-compression.html' },
-        { label: '框架 vs 手搓', href: 'agent/engineering/framework-vs-scratch.html' }
-      ] }
-    ] },
-    { label: 'Redis', children: [
-      { label: '数据类型', children: [
-        { label: 'String', href: 'redis/data-types/string.html' },
-        { label: 'List', href: 'redis/data-types/list.html' },
-        { label: 'Hash', href: 'redis/data-types/hash.html' },
-        { label: 'Set', href: 'redis/data-types/set.html' },
-        { label: 'ZSet', href: 'redis/data-types/zset.html' },
-        { label: 'Stream', href: 'redis/data-types/stream.html' },
-        { label: 'Bitmap', href: 'redis/data-types/bitmap.html' },
-        { label: 'HyperLogLog', href: 'redis/data-types/hyperloglog.html' },
-        { label: 'GEO', href: 'redis/data-types/geo.html' }
-      ] },
-      { label: '底层结构', children: [
-        { label: 'SDS', href: 'redis/data-structures/sds.html' },
-        { label: 'dict', href: 'redis/data-structures/dict.html' },
-        { label: 'listpack', href: 'redis/data-structures/listpack.html' },
-        { label: 'robj', href: 'redis/data-structures/obj.html' }
-      ] },
-      { label: '内存管理', children: [
-        { label: '过期与淘汰', href: 'redis/memory/expire-evict.html' }
       ] }
     ] }
   ];
