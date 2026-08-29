@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orchestrator-Workers · 主管-工人</title><link rel="stylesheet" href="../../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Multi-Agent</span><h1>Orchestrator-Workers · 主管-工人</h1><p class="lead">一个主管拆任务，多个工人并行做</p></div></div>
+<main class="wrap"><nav class="toc"><a href="#p1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">动态分派</div></a><a href="#p2"><div class="num">PART 02</div><div class="name">对比</div><div class="desc">与顺序/静态</div></a><a href="#p3"><div class="num">PART 03</div><div class="name">边界</div><div class="desc">独立与汇总</div></a></nav>
+<div class="part-head" id="p1"><span class="part-tag">PART 01 · 是什么</span><h2 class="part-title">主管规划，工人执行</h2></div>
+<section><h2>一个主任务拆成多个子任务</h2><p class="sub">主管 LLM 动态拆解目标、把每个子任务分给一个 worker，再汇总各 worker 结果。</p><div class="flow"><div class="fl"><div class="side">Orchestrator</div><div>拆解 + 分派 + 汇总<span>决定任务、数量与顺序。</span></div></div><div class="fl-arr">↓</div><div class="fl"><div class="side">Workers</div><div>各自执行一个独立子任务<span>只做自己的部分。</span></div></div><div class="fl-arr">↓</div><div class="fl"><div class="side">结果</div><div>合并成最终输出</div></div></div></section>
+<div class="part-head" id="p2"><span class="part-tag">PART 02 · 对比</span><h2 class="part-title">与顺序/静态流程</h2></div>
+<section><h2>动态 vs 预定</h2><p class="sub">Orchestrator-Workers 是“动态规划 + 并行”，不同于静态写死的 workflow 或纯串行。</p><div class="card"><table class="prob" style="margin-bottom:0"><thead><tr><th></th><th>Orchestrator-Workers</th><th>静态 workflow</th></tr></thead><tbody><tr><td class="q">分派</td><td>LLM 动态决定</td><td>代码写死</td></tr><tr><td class="q">并行</td><td>可并行</td><td>通常串行</td></tr><tr><td class="q">适合</td><td>子任务边界清晰、可独立</td><td>流程固定、需确定</td></tr></tbody></table></div></section>
+<div class="part-head" id="p3"><span class="part-tag">PART 03 · 边界</span><h2 class="part-title">独立与汇总</h2></div>
+<section><h2>子任务要真独立</h2><p class="sub">worker 之间强依赖或共享可变状态时，并行会出错；必要时让 worker 只读、结果集中汇总。</p><div class="note"><strong>出处：</strong>Anthropic《Building Effective Agents》把 orchestrator-workers 列为一种 workflow（一个中心 LLM 拆解并分派、多个 worker 并行执行）。</div></section>
+<script src="../../sidebar.js" defer></script>
+</main></body></html>

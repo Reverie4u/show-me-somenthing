@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Multi-agent Debate · 多智能体辩论</title><link rel="stylesheet" href="../../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Multi-Agent</span><h1>Multi-agent Debate · 多智能体辩论</h1><p class="lead">多个模型互相批评，提升事实性与推理</p></div></div>
+<main class="wrap"><nav class="toc"><a href="#p1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">各自作答+互评</div></a><a href="#p2"><div class="num">PART 02</div><div class="name">效果</div><div class="desc">事实性与推理</div></a><a href="#p3"><div class="num">PART 03</div><div class="name">代价</div><div class="desc">调用成本</div></a></nav>
+<div class="part-head" id="p1"><span class="part-tag">PART 01 · 是什么</span><h2 class="part-title">各答各的，再看别人答案</h2></div>
+<section><h2>多轮“生成→互看→修订”</h2><p class="sub">多个 agent 对同一问题独立作答，随后看到彼此答案、互相批评，再修订，重复数轮直到收敛。</p><div class="flow"><div class="fl"><div class="side">独立作答</div><div>每个 agent 先给出自己的答案</div></div><div class="fl-arr">↓</div><div class="fl"><div class="side">互相批评</div><div>看到他人答案，指出问题并修订</div></div><div class="fl-arr">↓</div><div class="fl"><div class="side">收敛</div><div>几轮后答案趋于一致/更可靠</div></div></div></section>
+<div class="part-head" id="p2"><span class="part-tag">PART 02 · 效果</span><h2 class="part-title">提升事实性与推理</h2></div>
+<section><h2>论文结论</h2><p class="sub">多智能体辩论在数学推理、策略思维、事实正确性上均有提升，答案更一致。</p><div class="note"><strong>出处：</strong>Du et al. 2023，《Improving Factuality and Reasoning in Language Models through Multiagent Debate》，<a href="https://arxiv.org/abs/2305.14325">arXiv:2305.14325</a>。</div></section>
+<div class="part-head" id="p3"><span class="part-tag">PART 03 · 代价</span><h2 class="part-title">调用成本</h2></div>
+<section><h2>好用但贵</h2><p class="sub">每轮每个 agent 都要调用，N 个 agent × M 轮 ≈ N×M 次调用；适合准确率敏感、容错低的任务。</p><div class="fields"><div class="field"><h3>适合</h3><div class="type">准确率敏感</div><p>事实核查、复杂推理、多答案取舍。</p></div><div class="field"><h3>不适合</h3><div class="type">成本敏感</div><p>简单问题、延迟敏感场景，单独一次就够。</p></div></div></section>
+<script src="../../sidebar.js" defer></script>
+</main></body></html>

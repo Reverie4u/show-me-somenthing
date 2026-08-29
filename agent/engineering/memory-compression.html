@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>记忆压缩</title><link rel="stylesheet" href="../../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Engineering</span><h1>记忆压缩</h1><p class="lead">把长历史压进有限的上下文窗口</p></div></div>
+<main class="wrap"><nav class="toc"><a href="#p1"><div class="num">PART 01</div><div class="name">为什么</div><div class="desc">窗口有限</div></a><a href="#p2"><div class="num">PART 02</div><div class="name">手段</div><div class="desc">摘要/压缩/检索</div></a><a href="#p3"><div class="num">PART 03</div><div class="name">权衡</div><div class="desc">压缩必有损</div></a></nav>
+<div class="part-head" id="p1"><span class="part-tag">PART 01 · 为什么</span><h2 class="part-title">窗口有限，历史会增长</h2></div>
+<section><h2>不压缩就爆上下文</h2><p class="sub">对话、工具结果、推理不断累积，成本与错误都随之上升；把不重要的历史压缩成摘要或只保留关键。</p><div class="note"><strong>出处：</strong>LLM 上下文有限，见 <a href="https://arxiv.org/abs/2310.08560">MemGPT</a> 的思路：在有限窗口内分层管理记忆。</div></section>
+<div class="part-head" id="p2"><span class="part-tag">PART 02 · 手段</span><h2 class="part-title">摘要 / 压缩 / 检索</h2></div>
+<section><h2>三种常见做法</h2><p class="sub">可以组合使用：把历史浓缩、去重，或只把“相关”的部分取回。</p><div class="fields"><div class="field"><h3>摘要</h3><div class="type">浓缩事实</div><p>让模型把旧对话/结果总结成一段关键信息。</p></div><div class="field"><h3>压缩</h3><div class="type">缩短 token</div><p>用 LLMLingua 类方法压缩提示，保留语义、减少 token；见 <a href="https://arxiv.org/abs/2310.05736">LLMLingua</a>。</p></div><div class="field"><h3>检索</h3><div class="type">按需取回</div><p>不全都塞入，只检索与当前相关的内容。</p></div></div></section>
+<div class="part-head" id="p3"><span class="part-tag">PART 03 · 权衡</span><h2 class="part-title">压缩必有损</h2></div>
+<section><h2>保关键、可回取</h2><p class="sub">压缩会丢细节，可能丢重要信息；关键结论要保留，必要时能按需回取原文，并配校验。</p><div class="note"><strong>工程实现 vs 一手定义：</strong>向量库/压缩是<b>工程实现</b>；记忆分层的一手代表是 MemGPT 与 Generative Agents。</div></section>
+<script src="../../sidebar.js" defer></script>
+</main></body></html>

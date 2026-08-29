@@ -1,124 +1,17 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>什么是 AI Agent</title>
-<link rel="stylesheet" href="../theme.css">
-</head>
-<body>
-
-<div class="hero">
-  <div class="wrap">
-    <span class="badge">Concept · AI Agent</span>
-    <h1>什么是 AI Agent</h1>
-    <p class="lead">Agent = 会用工具完成目标的 AI。它不只回答，还会根据结果决定下一步，直到完成或停止。</p>
-  </div>
-</div>
-
-<main class="wrap">
-  <nav class="toc" aria-label="页面目录">
-    <a href="#part-1"><div class="num">PART 01</div><div class="name">一句话</div><div class="desc">它做什么</div></a>
-    <a href="#part-2"><div class="num">PART 02</div><div class="name">循环</div><div class="desc">为什么能完成任务</div></a>
-    <a href="#part-3"><div class="num">PART 03</div><div class="name">例子</div><div class="desc">实际会发生什么</div></a>
-    <a href="#part-4"><div class="num">PART 04</div><div class="name">区别</div><div class="desc">和聊天机器人相比</div></a>
-  </nav>
-
-  <div class="part-head" id="part-1">
-    <span class="part-tag">PART 01 · 一句话</span>
-    <h2 class="part-title">Agent 是“完成任务”的程序</h2>
-  </div>
-
-  <section>
-    <h2>输入目标，输出完成结果</h2>
-    <p class="sub">普通聊天机器人主要输出文字；Agent 可以读取信息、调用工具并验证结果。</p>
-    <div class="flow" aria-label="Agent 的输入与输出">
-      <div class="fl">
-        <div class="side">目标</div>
-        <div><code>“整理下载目录，只保留 PDF”</code><span>用户给的是结果，不必指定每一步。</span></div>
-      </div>
-      <div class="fl-arr">↓</div>
-      <div class="fl">
-        <div class="side">Agent</div>
-        <div>自己拆步骤、选择工具、根据结果调整<span>核心不是“聪明回答”，而是“下一步能继续做”。</span></div>
-      </div>
-      <div class="fl-arr">↓</div>
-      <div class="fl">
-        <div class="side">结果</div>
-        <div>目录已整理，并报告保留和删除了什么<span>结果必须可检查，不是只说“完成了”。</span></div>
-      </div>
-    </div>
-  </section>
-
-  <div class="part-head" id="part-2">
-    <span class="part-tag">PART 02 · 循环</span>
-    <h2 class="part-title">它靠循环，而不是一次回答</h2>
-  </div>
-
-  <section>
-    <h2>每次行动后，都先看结果</h2>
-    <p class="sub">结果不符合预期时，Agent 换一个步骤；完成时才停止。</p>
-    <div class="card memcard">
-      <div class="memlabel">一个最小 Agent 循环</div>
-      <pre><span class="k">收到目标</span>
-<span class="k">while</span> 未完成 且 未超时:
-  下一步 = LLM 根据目标和已有结果决定
-  结果 = 调用工具(下一步)
-  把结果交给 LLM
-<span class="g">返回最终结果</span></pre>
-      <div class="note"><strong>四个词：</strong>目标 → 决定 → 执行 → 观察。观察后的信息会影响下一次决定。</div>
-    </div>
-    <div class="fields" style="margin-top:16px;">
-      <div class="field"><h3>目标</h3><div class="type">要完成什么</div><p>例如“查 Redis 是否有慢查询”。</p></div>
-      <div class="field"><h3>工具</h3><div class="type">能做什么</div><p>读文件、执行命令、搜索网页、调用 API。</p></div>
-      <div class="field"><h3>停止条件</h3><div class="type">何时结束</div><p>完成、失败、超时或达到最大步数。</p></div>
-    </div>
-  </section>
-
-  <div class="part-head" id="part-3">
-    <span class="part-tag">PART 03 · 例子</span>
-    <h2 class="part-title">目标：找出 Redis 的慢命令</h2>
-  </div>
-
-  <section>
-    <h2>一次任务会怎样执行</h2>
-    <p class="sub">这个例子中，Agent 不知道答案；它通过工具一步步获得答案。</p>
-    <div class="grow">
-      <div class="card">
-        <div class="step"><div class="n">1</div><div><h4>决定</h4><p>先检查慢日志是否开启，以及是否有记录。</p></div></div>
-        <div class="step"><div class="n">2</div><div><h4>执行</h4><p>调用 <code>redis-cli SLOWLOG GET 10</code>。</p></div></div>
-        <div class="step"><div class="n">3</div><div><h4>观察</h4><p>看到 <code>KEYS *</code> 多次出现，耗时最高。</p></div></div>
-        <div class="step"><div class="n">4</div><div><h4>继续处理</h4><p>解释风险，并建议用 <code>SCAN</code> 替代。</p></div></div>
-      </div>
-    </div>
-    <div class="case-card" style="margin-top:16px;">
-      <div class="case-head"><span class="case-num">结果</span><span class="case-title">最终回答应包含证据</span></div>
-      <p><strong>发现：</strong>最近 10 条慢命令中有 6 条是 <code>KEYS *</code>。<br><strong>建议：</strong>用 <code>SCAN</code> 分批遍历，避免阻塞 Redis 主线程。</p>
-    </div>
-  </section>
-
-  <div class="part-head" id="part-4">
-    <span class="part-tag">PART 04 · 区别</span>
-    <h2 class="part-title">普通 LLM 和 Agent 的差别</h2>
-  </div>
-
-  <section>
-    <h2>模型负责决定，程序负责执行</h2>
-    <p class="sub">Agent 通常以 LLM 为“大脑”，再加工具、循环和停止条件。</p>
-    <div class="card">
-      <table class="prob" style="margin-bottom:0;">
-        <thead><tr><th></th><th>普通 LLM</th><th>Agent</th></tr></thead>
-        <tbody>
-          <tr><td class="q">输入</td><td>一个问题</td><td>一个目标</td></tr>
-          <tr><td class="q">输出</td><td>一段文字</td><td>文字 + 工具执行结果</td></tr>
-          <tr><td class="q">下一步</td><td>通常等待用户再问</td><td>根据工具结果自己继续</td></tr>
-          <tr><td class="q">边界</td><td>不能直接影响外部系统</td><td>权限范围内可读写、调用 API、执行命令</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="note"><strong>不要误解：</strong>Agent 不等于“永远正确”。它只是能执行多步任务；工具权限、验证和停止条件仍然需要设计。</div>
-  </section>
-</main>
-
-</body>
-</html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>什么是 AI Agent</title><link rel="stylesheet" href="../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Concept · AI Agent</span><h1>什么是 AI Agent</h1><p class="lead">Agent 没有唯一的官方定义：它分两条主线，但都指向同一组要素——目标、感知与行动、自主性、反馈循环。</p></div></div>
+<main class="wrap"><nav class="toc" aria-label="页面目录"><a href="#part-1"><div class="num">PART 01</div><div class="name">一句话</div><div class="desc">它做什么</div></a><a href="#part-2"><div class="num">PART 02</div><div class="name">两条主线</div><div class="desc">教科书 vs 工业界</div></a><a href="#part-3"><div class="num">PART 03</div><div class="name">四要素</div><div class="desc">定义里的共性</div></a><a href="#part-4"><div class="num">PART 04</div><div class="name">循环</div><div class="desc">为什么能完成任务</div></a><a href="#part-5"><div class="num">PART 05</div><div class="name">基本架构</div><div class="desc">由哪些组件构成</div></a><a href="#part-6"><div class="num">PART 06</div><div class="name">区别</div><div class="desc">和聊天机器人相比</div></a></nav>
+<div class="part-head" id="part-1"><span class="part-tag">PART 01 · 一句话</span><h2 class="part-title">Agent 是自主完成目标的系统</h2></div>
+<section><h2>感知环境，作用于环境，按反馈继续</h2><p class="sub">一句话概括综合了四个一手出处；确切表述见 PART 02 与 PART 06。</p><div class="flow" aria-label="Agent 的输入与输出"><div class="fl"><div class="side">目标</div><div>用户给的是结果，不必指定每一步。</div></div><div class="fl-arr">↓</div><div class="fl"><div class="side">Agent</div><div>感知 → 推理 → 行动 → 观察<span>核心是“下一步能继续做”。</span></div></div><div class="fl-arr">↓</div><div class="fl"><div class="side">结果</div><div>可检查的完成结果<span>不是只说“完成了”。</span></div></div></div></section>
+<div class="part-head" id="part-2"><span class="part-tag">PART 02 · 两条主线</span><h2 class="part-title">教科书 vs 工业界</h2></div>
+<section><h2>四份一手定义</h2><p class="sub">经典 AI 与工业界 LLM Agent 表述不同，但没有冲突，只是侧重不同。</p><div class="card"><table class="prob" style="margin-bottom:0;"><thead><tr><th></th><th>经典教科书 / 论文</th><th>工业界官方文档</th></tr></thead><tbody><tr><td class="q">代表</td><td>Russell &amp; Norvig · Wooldridge &amp; Jennings</td><td>Anthropic · OpenAI</td></tr><tr><td class="q">强调</td><td>理性智能体、感知-行动循环</td><td>LLM + 工具 + 反馈循环</td></tr><tr><td class="q">视角</td><td>环境交互与理性</td><td>模型动态决策多步任务</td></tr></tbody></table></div><div class="fields" style="margin-top:16px;"><div class="field"><h3>Russell &amp; Norvig</h3><div class="type">教科书 · <a href="http://aima.cs.berkeley.edu/">《AI: A Modern Approach》</a></div><p>“能通过<b>传感器感知环境</b>、通过<b>执行器作用于环境</b>的事物。”另按能力给出反射式、基于模型、基于目标、基于效用、学习型五类。</p></div><div class="field"><h3>Wooldridge &amp; Jennings</h3><div class="type">论文 · <a href="https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html">Intelligent Agents: Theory &amp; Practice</a></div><p>“<b>处于某环境</b>、能<b>自主行动</b>以达成<b>设计目标</b>的计算机系统。”四属性：自主性、反应性、主动性、社会性。</p></div><div class="field"><h3>Anthropic</h3><div class="type">官方文档 · <a href="https://www.anthropic.com/research/building-effective-agents">Building Effective Agents</a></div><p>agentic systems 分两类：<b>Workflow</b> 走预定义代码路径；<b>Agent</b> 由 LLM 动态主导流程与工具使用。“本质是在反馈循环中用工具的 LLM。”</p></div><div class="field"><h3>OpenAI</h3><div class="type">官方文档 · <a href="https://openai.github.io/openai-agents-python/agents/">Agents SDK</a></div><p>“<b>配置了 instructions、tools 和可选运行时行为</b>（handoffs、guardrails、结构化输出）的 LLM。”工程上即会规划、调工具、协作、持状态完成多步任务的应用。</p></div></div></section>
+<div class="part-head" id="part-3"><span class="part-tag">PART 03 · 四要素</span><h2 class="part-title">不同定义里的共性</h2></div>
+<section><h2>四个出处都指向这四点</h2><p class="sub">去掉各自的术语，剩下的共同结构。</p><div class="fields"><div class="field"><h3>目标</h3><div class="type">为谁完成什么</div><p>Wooldridge 叫“设计目标”，OpenAI 叫“应用任务”。</p></div><div class="field"><h3>感知与行动</h3><div class="type">与环境交互</div><p>Russell 叫“传感器/执行器”，Anthropic 叫“工具调用”。</p></div><div class="field"><h3>自主性</h3><div class="type">无需逐步指挥</div><p>Wooldridge 列为第一属性，Anthropic 强调“动态主导”。</p></div><div class="field"><h3>反馈循环</h3><div class="type">据结果调整</div><p>Anthropic 称“environmental feedback in a loop”。</p></div></div></section>
+<div class="part-head" id="part-4"><span class="part-tag">PART 04 · 循环</span><h2 class="part-title">靠循环完成，而不是一次回答</h2></div>
+<section><h2>一个最小 Agent 循环</h2><p class="sub">模型决定下一步，程序执行并把结果交回。</p><div class="card memcard"><div class="memlabel">最小循环</div><pre><span class="k">收到目标</span><br><span class="k">while</span> 未完成 且 未超时:<br>  下一步 = LLM 依目标 + 已有结果决定<br>  结果 = 调用工具(下一步)<br>  把结果交回给 LLM<br><span class="g">返回最终结果</span></pre><div class="note"><strong>四步：</strong>决定 → 执行 → 观察 → 再决定。观察来自环境（工具结果/代码执行），是 Anthropic 所说的“地面真值”。</div></div><div class="grow" style="margin-top:16px;"><div class="card"><div class="step"><div class="n">1</div><div><h4>决定</h4><p>先查慢日志是否开启。</p></div></div><div class="step"><div class="n">2</div><div><h4>执行</h4><p>调用 <code>redis-cli SLOWLOG GET 10</code>。</p></div></div><div class="step"><div class="n">3</div><div><h4>观察</h4><p>看到 <code>KEYS *</code> 多次出现。</p></div></div><div class="step"><div class="n">4</div><div><h4>再决定</h4><p>解释风险，建议用 <code>SCAN</code>。</p></div></div></div></div></section>
+<div class="part-head" id="part-5"><span class="part-tag">PART 05 · 基本架构</span><h2 class="part-title">一个 Agent 的四个核心组件</h2></div>
+<section><h2>LLM、工具、记忆状态、规划</h2><p class="sub">四类组件的框架可溯源到一手文档与教科书；具体实现细节标注为“工程视角”，不作一手结论。</p><div class="fields"><div class="field"><h3>LLM 核心</h3><div class="type">大脑 · 决策</div><p>OpenAI：Agent 是“<b>配置了 instructions 的 LLM</b>”。Anthropic：“LLM <b>动态主导</b>自己的流程与工具使用”。职责：读入目标 + 当前状态，决定下一步。</p></div><div class="field"><h3>工具系统</h3><div class="type">感知与作用环境</div><p>OpenAI / Anthropic：<b>tools</b>。Russell &amp; Norvig：<b>传感器 / 执行器</b>。模型只输出“调哪个工具、什么参数”，真正执行的是程序；工具接口需精心文档化。</p></div><div class="field"><h3>记忆 / 状态</h3><div class="type">保持上下文</div><p>OpenAI：<b>context</b>（传给每个 agent 与 tool 的依赖与状态）。Anthropic：LLM 增强含 <b>memory</b>。Russell：基于模型的智能体维护<b>内部状态</b>。</p><p><b>细分：</b>短期记忆≈当前任务上下文（context window），长期记忆跨任务保存、常用向量检索存取。短期/长期之分源自认知科学（<a href="https://doi.org/10.1016/S0079-7421(08)60422-3">Atkinson-Shiffrin</a>），LLM agent 侧一手代表为 <a href="https://arxiv.org/abs/2310.08560">MemGPT</a> 与 <a href="https://arxiv.org/abs/2304.03442">Generative Agents</a>（Park 等以 recency / relevance / importance 评分检索）；向量数据库仅是承载长期记忆的<b>工程实现</b>。</p></div><div class="field"><h3>规划 / 决策</h3><div class="type">拆解目标</div><p>OpenAI：Agent 会 <b>plan</b>。Anthropic：工作流 + LLM 主导。Russell：<b>基于目标 / 基于效用</b>的智能体做目标与效用推理。</p><p><b>推理手段：</b>CoT（<a href="https://arxiv.org/abs/2201.11903">Wei 等 2022，arXiv:2201.11903</a>）让模型生成<b>中间推理步骤</b>；ToT（<a href="https://arxiv.org/abs/2305.10601">Yao 等 2023，arXiv:2305.10601</a>）在每个决策节点<b>展开多个分支再评估</b>。二者均有明确一手论文，是规划环节的典型手段。</p></div></div><div class="note"><strong>一手与演进的区分：</strong>LLM、工具、状态/记忆、规划这四类的框架可溯源到 OpenAI / Anthropic 文档与 Russell &amp; Norvig 教科书。CoT、ToT、短期/长期记忆均为有一手论文支撑的手段或细分；向量数据库、记忆衰减则属工程实现或启发式，非一手定义的必要组成。</div><div class="note"><strong>协同：</strong>四组件都服务于同一个循环——<b>规划 → 决策 → 调用工具 → 结果入状态 → 再决策</b>。</div></section>
+<div class="part-head" id="part-6"><span class="part-tag">PART 06 · 区别</span><h2 class="part-title">普通 LLM 和 Agent 的差别</h2></div>
+<section><h2>模型负责决定，程序负责执行</h2><p class="sub">Agent 以 LLM 为“大脑”，再加工具、循环和停止条件（OpenAI 的可选运行时行为）。</p><div class="card"><table class="prob" style="margin-bottom:0;"><thead><tr><th></th><th>普通 LLM</th><th>Agent</th></tr></thead><tbody><tr><td class="q">输入</td><td>一个问题</td><td>一个目标</td></tr><tr><td class="q">输出</td><td>一段文字</td><td>文字 + 工具执行结果</td></tr><tr><td class="q">下一步</td><td>通常等用户再问</td><td>据工具结果自己继续</td></tr><tr><td class="q">边界</td><td>不能直接影响外部系统</td><td>权限内读写、调 API、执行命令</td></tr></tbody></table></div><div class="note"><strong>不要误解：</strong>Agent 不等于“永远正确”。它是能执行多步任务的系统；工具权限、验证与停止条件仍需设计。</div></section>
+</main><script src="../sidebar.js" defer></script>
+</body></html>

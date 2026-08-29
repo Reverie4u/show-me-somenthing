@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>框架 vs 手搓</title><link rel="stylesheet" href="../../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Engineering</span><h1>框架 vs 手搓</h1><p class="lead">用现成框架，还是自己写循环？</p></div></div>
+<main class="wrap"><nav class="toc"><a href="#p1"><div class="num">PART 01</div><div class="name">区别</div><div class="desc">框架给什么</div></a><a href="#p2"><div class="num">PART 02</div><div class="name">怎么选</div><div class="desc">快速 vs 可控</div></a><a href="#p3"><div class="num">PART 03</div><div class="name">结论</div><div class="desc">框架不加智能</div></a></nav>
+<div class="part-head" id="p1"><span class="part-tag">PART 01 · 区别</span><h2 class="part-title">框架给什么</h2></div>
+<section><h2>框架封装的是“工程”，不是“智能”</h2><p class="sub">框架提供工具注册、路由、状态管理、多 agent 编排等；手搓则自己实现循环，依赖更少、更可控。</p><div class="card"><table class="prob" style="margin-bottom:0"><thead><tr><th></th><th>框架</th><th>手搓</th></tr></thead><tbody><tr><td class="q">上手</td><td>快，脚手架齐全</td><td>慢，要自己写循环</td></tr><tr><td class="q">依赖</td><td>多</td><td>少，可控</td></tr><tr><td class="q">定制</td><td>受框架约束</td><td>可深度定制</td></tr></tbody></table></div></section>
+<div class="part-head" id="p2"><span class="part-tag">PART 02 · 怎么选</span><h2 class="part-title">快速 vs 可控</h2></div>
+<section><h2>按场景选</h2><p class="sub">快速原型、多 agent 协作、需要工具生态用框架；要最小依赖、深度定制、研究性实验用手搓。</p><div class="fields"><div class="field"><h3>用框架</h3><div class="type">省事</div><p>团队多人协作、标准工具、快速上线。</p></div><div class="field"><h3>手搓</h3><div class="type">可控</div><p>最小依赖、精细控制每步、方便替换模型。</p></div></div></section>
+<div class="part-head" id="p3"><span class="part-tag">PART 03 · 结论</span><h2 class="part-title">框架不加智能</h2></div>
+<section><h2>先想清楚，再选工具</h2><p class="sub">Anthropic 提醒：框架不会让 agent 更聪明；先想清楚要 workflow 还是 agent，再用框架承载设计。</p><div class="note"><strong>出处：</strong><a href="https://www.anthropic.com/research/building-effective-agents">Anthropic《Building Effective Agents》</a>：框架不够时，可以从一个简单循环开始，再补组件。</div></section>
+<script src="../../sidebar.js" defer></script>
+</main></body></html>

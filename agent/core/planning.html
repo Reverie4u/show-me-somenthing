@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>规划与决策</title><link rel="stylesheet" href="../../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Core · Agent</span><h1>规划与决策</h1><p class="lead">把大目标拆成有序步骤，并按需调整——这是 Agent 能干多步任务的关键。</p></div></div>
+<main class="wrap"><nav class="toc"><a href="#p1"><div class="num">PART 01</div><div class="name">拆分</div><div class="desc">规划/执行</div></a><a href="#p2"><div class="num">PART 02</div><div class="name">推理</div><div class="desc">CoT / ToT</div></a><a href="#p3"><div class="num">PART 03</div><div class="name">动态</div><div class="desc">Replan</div></a></nav>
+<div class="part-head" id="p1"><span class="part-tag">PART 01 · 拆分</span><h2 class="part-title">规划与执行分离</h2></div>
+<section><h2>先想清楚，再动手</h2><p class="sub">规划器给出有序步骤，执行器逐步落地；可分别用不同模型（规划用强模型，执行用便宜模型）。</p><div class="note"><strong>见：</strong>Plan-and-Execute 范式，详见 <a href="../patterns/plan-execute.html">plan-execute</a>；为何拆见 <a href="../patterns/tasksplit.html">LLM任务拆分</a>。</div></section>
+<div class="part-head" id="p2"><span class="part-tag">PART 02 · 推理</span><h2 class="part-title">把隐性推理显式化</h2></div>
+<section><h2>单链到多分支</h2><p class="sub">CoT 写出一条推理链；ToT 在每个节点生成多个候选再评估。</p><div class="fields"><div class="field"><h3>CoT</h3><div class="type">一条链</div><p>生成中间推理步骤，减少累积误差；见 <a href="https://arxiv.org/abs/2201.11903">Wei 等 2022</a>。</p></div><div class="field"><h3>ToT</h3><div class="type">一棵树</div><p>多个候选、评估、剪枝；见 <a href="https://arxiv.org/abs/2305.10601">Yao 等 2023</a>。</p></div></div><div class="note"><strong>另见：</strong><a href="../patterns/reasoning.html">CoT · ToT · GoT</a> 完整页。</div></section>
+<div class="part-head" id="p3"><span class="part-tag">PART 03 · 动态</span><h2 class="part-title">计划可以改</h2></div>
+<section><h2>结果不符就 Replan</h2><p class="sub">计划不是死的；执行中发现偏差或失败，把已完成结果 + 剩余计划交给规划器重新规划。</p><div class="note"><strong>权衡：</strong>每步都重规划会线性增加调用；实践中只在“输出异常”或“失败”时触发。</div></section>
+</main><script src="../../sidebar.js" defer></script>
+</body></html>

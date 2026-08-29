@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>工具系统</title><link rel="stylesheet" href="../../theme.css"></head><body>
+<div class="hero"><div class="wrap"><span class="badge">Core · Agent</span><h1>工具系统</h1><p class="lead">Agent 改变世界的方式：通过工具“感知与作用环境”。</p></div></div>
+<main class="wrap"><nav class="toc"><a href="#p1"><div class="num">PART 01</div><div class="name">作用</div><div class="desc">感知与行动</div></a><a href="#p2"><div class="num">PART 02</div><div class="name">接口</div><div class="desc">函数签名</div></a><a href="#p3"><div class="num">PART 03</div><div class="name">设计</div><div class="desc">文档与安全</div></a></nav>
+<div class="part-head" id="p1"><span class="part-tag">PART 01 · 作用</span><h2 class="part-title">感知与作用环境</h2></div>
+<section><h2>工具 = 传感器 + 执行器</h2><p class="sub">Read 类工具感知外部，Write 类工具作用外部。</p><div class="fields"><div class="field"><h3>感知</h3><div class="type">读外部</div><p>搜索、查询、读文件；对应 Russell &amp; Norvig 的<b>传感器</b>。</p></div><div class="field"><h3>作用</h3><div class="type">写外部</div><p>调 API、执行命令、落盘；对应<b>执行器</b>。</p></div></div><div class="note"><strong>出处：</strong>“传感器 / 执行器”见 Russell &amp; Norvig《AI: A Modern Approach》；工业界以 tools 体现，见 OpenAI / Anthropic 文档。</div></section>
+<div class="part-head" id="p2"><span class="part-tag">PART 02 · 接口</span><h2 class="part-title">函数签名</h2></div>
+<section><h2>工具要能被模型“看懂”</h2><p class="sub">把每个工具描述成清晰的函数签名：名称、作用、参数、返回。</p><div class="card memcard"><div class="memlabel">最小工具定义</div><pre><span class="k">名称</span> search<br><span class="k">描述</span> 按关键词返回网页标题与摘要<br><span class="k">参数</span> query: string<br><span class="k">返回</span> list&#123;title, url, snippet&#125;</pre><div class="note"><strong>关键：</strong>参数与返回值越明确，模型选对工具、填对参数的概率越高。</div></div></section>
+<div class="part-head" id="p3"><span class="part-tag">PART 03 · 设计</span><h2 class="part-title">文档与安全</h2></div>
+<section><h2>权限与验证要设计</h2><p class="sub">工具越多、权限越大，越需要边界：最小权限、参数校验、输出截断。</p><div class="fields"><div class="field"><h3>最小权限</h3><div class="type">只给必要</div><p>只暴露任务需要的工具，避免读到敏感数据或破坏环境。</p></div><div class="field"><h3>参数校验</h3><div class="type">防止误用</div><p>执行前校验参数；返回/日志需截断，防止撑爆上下文。</p></div></div></section>
+</main><script src="../../sidebar.js" defer></script>
+</body></html>

@@ -1,0 +1,147 @@
+(function () {
+  function ready(fn) {
+    if (document.readyState !== 'loading') fn();
+    else document.addEventListener('DOMContentLoaded', fn);
+  }
+
+  // 站点根路径：依据当前页面里 theme.css 的 ../ 层数推导，兼容任意发布子路径
+  function siteRoot() {
+    var link = document.querySelector('link[rel="stylesheet"]');
+    var rel = link ? link.getAttribute('href') : '';
+    var up = (rel.match(/\.\.\//g) || []).length;
+    var seg = location.pathname.split('/');
+    seg = seg.slice(0, -1);
+    for (var i = 0; i < up; i++) seg.pop();
+    return seg.join('/') + '/';  // 可能是 '/' 或 '/子路径/'，保留用于站点根相对链接
+  }
+
+  var TREE = [
+    { label: 'Agent', children: [
+      { label: '什么是 AI Agent', href: 'agent/what-is-agent.html' },
+      { label: '范式', children: [
+        { label: 'ReAct', href: 'agent/patterns/react.html' },
+        { label: 'Plan-and-Execute', href: 'agent/patterns/plan-execute.html' },
+        { label: 'CoT · ToT · GoT', href: 'agent/patterns/reasoning.html' },
+        { label: 'Reflection', href: 'agent/patterns/reflection.html' },
+        { label: 'LLM任务拆分', href: 'agent/patterns/tasksplit.html' }
+      ] },
+      { label: '核心组件', children: [
+        { label: 'LLM 核心', href: 'agent/core/llm.html' },
+        { label: '工具系统', href: 'agent/core/tools.html' },
+        { label: '记忆与状态', href: 'agent/core/memory.html' },
+        { label: '规划与决策', href: 'agent/core/planning.html' }
+      ] },
+      { label: 'multi-agent', children: [
+        { label: 'Handoff', href: 'agent/multi-agent/handoff.html' },
+        { label: 'Orchestrator-Workers', href: 'agent/multi-agent/orchestrator-workers.html' },
+        { label: 'Multi-agent Debate', href: 'agent/multi-agent/debate.html' }
+      ] },
+      { label: '工程实践', children: [
+        { label: '记忆压缩', href: 'agent/engineering/memory-compression.html' },
+        { label: '框架 vs 手搓', href: 'agent/engineering/framework-vs-scratch.html' }
+      ] }
+    ] },
+    { label: 'Redis', children: [
+      { label: '数据类型', children: [
+        { label: 'String', href: 'redis/data-types/string.html' },
+        { label: 'List', href: 'redis/data-types/list.html' },
+        { label: 'Hash', href: 'redis/data-types/hash.html' },
+        { label: 'Set', href: 'redis/data-types/set.html' },
+        { label: 'ZSet', href: 'redis/data-types/zset.html' },
+        { label: 'Stream', href: 'redis/data-types/stream.html' },
+        { label: 'Bitmap', href: 'redis/data-types/bitmap.html' },
+        { label: 'HyperLogLog', href: 'redis/data-types/hyperloglog.html' },
+        { label: 'GEO', href: 'redis/data-types/geo.html' }
+      ] },
+      { label: '底层结构', children: [
+        { label: 'SDS', href: 'redis/data-structures/sds.html' },
+        { label: 'dict', href: 'redis/data-structures/dict.html' },
+        { label: 'listpack', href: 'redis/data-structures/listpack.html' },
+        { label: 'robj', href: 'redis/data-structures/obj.html' }
+      ] },
+      { label: '内存管理', children: [
+        { label: '过期与淘汰', href: 'redis/memory/expire-evict.html' }
+      ] }
+    ] }
+  ];
+
+  function render(root, nodes, depth) {
+    depth = depth || 0;
+    return nodes.map(function (n) {
+      if (n.children) {
+        return '<details class="tree-group" open><summary data-depth="' + depth + '">' + n.label + '</summary>' +
+          render(root, n.children, depth + 1) + '</details>';
+      }
+      return '<a class="tree-link" data-depth="' + depth + '" href="' + root + n.href + '">' + n.label + '</a>';
+    }).join('\n');
+  }
+
+  ready(function () {
+    var body = document.body;
+    var root = siteRoot();
+
+    var layout = document.createElement('div');
+    layout.className = 'layout';
+    var sidebar = document.createElement('aside');
+    sidebar.id = 'sidebar';
+    sidebar.className = 'sidebar';
+    sidebar.innerHTML = '<div class="sidebar-brand"><span class="mark"></span>自学笔记</div>' +
+      '<nav class="tree">' + render(root, TREE) + '</nav>';
+    var content = document.createElement('div');
+    content.className = 'content';
+
+    // 把原有 body 子节点搬进右侧内容区
+    while (body.firstChild) content.appendChild(body.firstChild);
+
+    layout.appendChild(sidebar);
+    layout.appendChild(content);
+    body.appendChild(layout);
+
+    // 移动端抽屉按钮
+    var btn = document.createElement('button');
+    btn.id = 'menu-btn';
+    btn.className = 'menu-btn';
+    btn.type = 'button';
+    btn.textContent = '☰ 目录';
+    content.appendChild(btn);
+    btn.addEventListener('click', function () { sidebar.classList.toggle('open'); });
+
+    function saveSidebar() {
+      try {
+        sessionStorage.setItem('sbScroll', String(sidebar.scrollTop));
+        var open = Array.prototype.map.call(
+          sidebar.querySelectorAll('details.tree-group'),
+          function (d) { return d.open; }
+        );
+        sessionStorage.setItem('sbOpen', JSON.stringify(open));
+      } catch (e) {}
+    }
+    function restoreSidebar() {
+      try {
+        var open = JSON.parse(sessionStorage.getItem('sbOpen') || 'null');
+        if (Array.isArray(open)) {
+          var ds = sidebar.querySelectorAll('details.tree-group');
+          open.forEach(function (v, i) { if (ds[i]) ds[i].open = !!v; });
+        }
+        sidebar.scrollTop = parseInt(sessionStorage.getItem('sbScroll') || '0', 10) || 0;
+      } catch (e) {}
+    }
+
+    sidebar.addEventListener('click', function (e) {
+      if (e.target && e.target.tagName === 'A') {
+        saveSidebar();
+        if (window.matchMedia('(max-width: 900px)').matches) sidebar.classList.remove('open');
+      }
+    });
+
+    restoreSidebar();
+
+    // 高亮当前页
+    var cur = location.href.split('#')[0];
+    if (cur.slice(-1) === '/') cur += 'index.html';
+    sidebar.querySelectorAll('a[href]').forEach(function (a) {
+      var href = a.href.split('#')[0];
+      if (href === cur) a.classList.add('active');
+    });
+  });
+})();

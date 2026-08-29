@@ -1,0 +1,14 @@
+{
+  "name": "show-me-something",
+  "version": "1.0.0",
+  "private": true,
+  "description": "静态自学笔记站 — Playwright 布局校验",
+  "scripts": {
+    "test": "playwright test",
+    "test:visual": "VISUAL=1 playwright test",
+    "visual:update": "VISUAL=1 playwright test --update-snapshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
