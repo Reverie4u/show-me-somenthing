@@ -12,149 +12,113 @@
   <div class="wrap">
     <span class="badge">Concept · AI Agent</span>
     <h1>什么是 AI Agent</h1>
-    <p class="lead">一个能自己决定下一步做什么的 AI 程序：拿到一个目标，自己拆解任务、调用工具、观察结果，然后<strong>继续决定下一步</strong>，直到完成目标。</p>
+    <p class="lead">Agent = 会用工具完成目标的 AI。它不只回答，还会根据结果决定下一步，直到完成或停止。</p>
   </div>
 </div>
 
-<div class="wrap">
-
-  <div class="toc">
-    <a href="#part-1"><div class="num">PART 01</div><div class="name">定义</div><div class="desc">自主闭环</div></a>
-    <a href="#part-2"><div class="num">PART 02</div><div class="name">循环</div><div class="desc">想 → 做 → 看 → 再来</div></a>
-    <a href="#part-3"><div class="num">PART 03</div><div class="name">支撑</div><div class="desc">工具 · 记忆 · 纠错</div></a>
-    <a href="#part-4"><div class="num">PART 04</div><div class="name">对比</div><div class="desc">Agent vs 普通 LLM</div></a>
-  </div>
+<main class="wrap">
+  <nav class="toc" aria-label="页面目录">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">一句话</div><div class="desc">它做什么</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">循环</div><div class="desc">为什么能完成任务</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">例子</div><div class="desc">实际会发生什么</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">区别</div><div class="desc">和聊天机器人相比</div></a>
+  </nav>
 
   <div class="part-head" id="part-1">
-    <span class="part-tag">PART 01 · 定义</span>
-    <h2 class="part-title">什么是 Agent</h2>
+    <span class="part-tag">PART 01 · 一句话</span>
+    <h2 class="part-title">Agent 是“完成任务”的程序</h2>
   </div>
 
-<section>
-  <h2>一句话定义</h2>
-  <p class="sub">Agent 执行的是一个任务，而不只是回答一句话。</p>
-  <div class="card">
-    <p style="font-size:16px; font-weight:500; line-height:1.7;">Agent 是一个<strong>能自己决定下一步做什么</strong>的 AI 程序：它拿到一个目标，自己拆解任务、调用工具、观察结果，然后继续决定下一步，直到完成目标。</p>
-    <div class="note" style="margin-top:12px;">这个模式叫<strong>自主闭环</strong>——感知 → 规划 → 行动 → 再感知。所以它与"问答式"LLM 的区别不在模型，而在<strong>循环</strong>。</div>
-  </div>
-</section>
+  <section>
+    <h2>输入目标，输出完成结果</h2>
+    <p class="sub">普通聊天机器人主要输出文字；Agent 可以读取信息、调用工具并验证结果。</p>
+    <div class="flow" aria-label="Agent 的输入与输出">
+      <div class="fl">
+        <div class="side">目标</div>
+        <div><code>“整理下载目录，只保留 PDF”</code><span>用户给的是结果，不必指定每一步。</span></div>
+      </div>
+      <div class="fl-arr">↓</div>
+      <div class="fl">
+        <div class="side">Agent</div>
+        <div>自己拆步骤、选择工具、根据结果调整<span>核心不是“聪明回答”，而是“下一步能继续做”。</span></div>
+      </div>
+      <div class="fl-arr">↓</div>
+      <div class="fl">
+        <div class="side">结果</div>
+        <div>目录已整理，并报告保留和删除了什么<span>结果必须可检查，不是只说“完成了”。</span></div>
+      </div>
+    </div>
+  </section>
 
   <div class="part-head" id="part-2">
     <span class="part-tag">PART 02 · 循环</span>
-    <h2 class="part-title">核心机制：Agent 循环</h2>
+    <h2 class="part-title">它靠循环，而不是一次回答</h2>
   </div>
 
-<section>
-  <h2>四步闭环</h2>
-  <p class="sub">每一步之间都会回到"思考"，因为上一步的结果是下一步的输入。</p>
-  <div class="grow">
-    <div class="card">
-      <div class="step">
-        <div class="n">1</div>
-        <div>
-          <h4>输入</h4>
-          <p>目标 / 指令，例如"查一下今天的 Redis 集群状态"。</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="n">2</div>
-        <div>
-          <h4>思考</h4>
-          <p>LLM 生成下一步：决定"先看看有哪些节点"。</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="n">3</div>
-        <div>
-          <h4>行动</h4>
-          <p>调用工具，执行 <code>redis-cli info</code> 之类的操作——<strong>工具不决策，只执行</strong>。</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="n">4</div>
-        <div>
-          <h4>观察</h4>
-          <p>把工具输出喂回给 LLM，作为下一轮思考的输入。</p>
-        </div>
-      </div>
+  <section>
+    <h2>每次行动后，都先看结果</h2>
+    <p class="sub">结果不符合预期时，Agent 换一个步骤；完成时才停止。</p>
+    <div class="card memcard">
+      <div class="memlabel">一个最小 Agent 循环</div>
+      <pre><span class="k">收到目标</span>
+<span class="k">while</span> 未完成 且 未超时:
+  下一步 = LLM 根据目标和已有结果决定
+  结果 = 调用工具(下一步)
+  把结果交给 LLM
+<span class="g">返回最终结果</span></pre>
+      <div class="note"><strong>四个词：</strong>目标 → 决定 → 执行 → 观察。观察后的信息会影响下一次决定。</div>
     </div>
-  </div>
-  <div class="note"><strong>什么时候停下来：</strong>任务完成 / 达到最大轮数 / 超时 / LLM 主动结束——生产环境里停止条件是必须配置的。</div>
-</section>
+    <div class="fields" style="margin-top:16px;">
+      <div class="field"><h3>目标</h3><div class="type">要完成什么</div><p>例如“查 Redis 是否有慢查询”。</p></div>
+      <div class="field"><h3>工具</h3><div class="type">能做什么</div><p>读文件、执行命令、搜索网页、调用 API。</p></div>
+      <div class="field"><h3>停止条件</h3><div class="type">何时结束</div><p>完成、失败、超时或达到最大步数。</p></div>
+    </div>
+  </section>
 
   <div class="part-head" id="part-3">
-    <span class="part-tag">PART 03 · 支撑</span>
-    <h2 class="part-title">支撑自主闭环的三样东西</h2>
+    <span class="part-tag">PART 03 · 例子</span>
+    <h2 class="part-title">目标：找出 Redis 的慢命令</h2>
   </div>
 
-<section>
-  <div class="fields">
-    <div class="field">
-      <h3>工具调用</h3>
-      <div class="type">决策与执行分离</div>
-      <p>从"说话"变"做事"：模型决定做什么，程序负责真正执行（命令、读写文件、搜索、调 API）。</p>
+  <section>
+    <h2>一次任务会怎样执行</h2>
+    <p class="sub">这个例子中，Agent 不知道答案；它通过工具一步步获得答案。</p>
+    <div class="grow">
+      <div class="card">
+        <div class="step"><div class="n">1</div><div><h4>决定</h4><p>先检查慢日志是否开启，以及是否有记录。</p></div></div>
+        <div class="step"><div class="n">2</div><div><h4>执行</h4><p>调用 <code>redis-cli SLOWLOG GET 10</code>。</p></div></div>
+        <div class="step"><div class="n">3</div><div><h4>观察</h4><p>看到 <code>KEYS *</code> 多次出现，耗时最高。</p></div></div>
+        <div class="step"><div class="n">4</div><div><h4>继续处理</h4><p>解释风险，并建议用 <code>SCAN</code> 替代。</p></div></div>
+      </div>
     </div>
-    <div class="field">
-      <h3>记忆</h3>
-      <div class="type">短期 + 长期</div>
-      <p>短期 = 当前对话上下文，容量有限；长期 = 向量库存偏好与历史，跨任务不忘。</p>
+    <div class="case-card" style="margin-top:16px;">
+      <div class="case-head"><span class="case-num">结果</span><span class="case-title">最终回答应包含证据</span></div>
+      <p><strong>发现：</strong>最近 10 条慢命令中有 6 条是 <code>KEYS *</code>。<br><strong>建议：</strong>用 <code>SCAN</code> 分批遍历，避免阻塞 Redis 主线程。</p>
     </div>
-    <div class="field">
-      <h3>多步推理与纠错</h3>
-      <div class="type">失败可重试</div>
-      <p>某步失败时分析原因、换方式重试，还能回头审视已完成的步骤。</p>
-    </div>
-  </div>
-</section>
+  </section>
 
   <div class="part-head" id="part-4">
-    <span class="part-tag">PART 04 · 对比</span>
-    <h2 class="part-title">Agent 与普通 LLM 的区别</h2>
+    <span class="part-tag">PART 04 · 区别</span>
+    <h2 class="part-title">普通 LLM 和 Agent 的差别</h2>
   </div>
 
-<section>
-  <div class="card">
-    <table class="prob" style="margin-bottom:0;">
-      <thead>
-        <tr><th></th><th>普通 LLM / 聊天机器人</th><th>Agent</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="q">知识</td>
-          <td>冻结：只到训练数据截止那刻</td>
-          <td>可用工具读取实时信息（搜索 / API / 文件）</td>
-        </tr>
-        <tr>
-          <td class="q">行动</td>
-          <td>不能行动：只是文本生成器</td>
-          <td>会行动：执行命令、读写文件、调 API</td>
-        </tr>
-        <tr>
-          <td class="q">状态</td>
-          <td>两次调用之间失忆</td>
-          <td>有记忆：短期上下文 + 长期向量库</td>
-        </tr>
-        <tr>
-          <td class="q">结束</td>
-          <td>一次提问 → 一次回答，答完即止</td>
-          <td>围绕目标循环，直到完成或触达停止条件</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="case-card" style="margin-top:16px;">
-    <div class="case-head"><span class="case-num">1</span><span class="case-title">一个具体例子：清理账本文件</span></div>
-    <pre><span class="k">思考</span>: 先看看文件有多大，再决定怎么清理
-<span class="g">调用工具</span>  Read  ledger.csv        <span class="c">→ 看到 2.1 MB、有重复行</span>
-<span class="g">调用工具</span>  Bash  python dedupe.py   <span class="c">→ 清理成功，节省 400 KB</span>
-<span class="g">调用工具</span>  Read  ledger.csv        <span class="c">→ 确认清理结果正常</span>
-<span class="k">回答</span>: 已清理，文件从 2.1 MB 降到 1.7 MB，重复行已删除</pre>
-    <p style="margin-top:10px;"><strong>注意观察环节：</strong>第三步读完文件后并没有直接答复，而是把结果带回去继续思考——这就是"循环"在起作用。</p>
-  </div>
-</section>
-
-</div>
+  <section>
+    <h2>模型负责决定，程序负责执行</h2>
+    <p class="sub">Agent 通常以 LLM 为“大脑”，再加工具、循环和停止条件。</p>
+    <div class="card">
+      <table class="prob" style="margin-bottom:0;">
+        <thead><tr><th></th><th>普通 LLM</th><th>Agent</th></tr></thead>
+        <tbody>
+          <tr><td class="q">输入</td><td>一个问题</td><td>一个目标</td></tr>
+          <tr><td class="q">输出</td><td>一段文字</td><td>文字 + 工具执行结果</td></tr>
+          <tr><td class="q">下一步</td><td>通常等待用户再问</td><td>根据工具结果自己继续</td></tr>
+          <tr><td class="q">边界</td><td>不能直接影响外部系统</td><td>权限范围内可读写、调用 API、执行命令</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><strong>不要误解：</strong>Agent 不等于“永远正确”。它只是能执行多步任务；工具权限、验证和停止条件仍然需要设计。</div>
+  </section>
+</main>
 
 </body>
 </html>

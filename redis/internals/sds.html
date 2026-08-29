@@ -3,342 +3,185 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SDS · 简单动态字符串</title>
+<title>SDS：Redis 的动态字符串</title>
 <link rel="stylesheet" href="../theme.css">
 </head>
 <body>
+<div class="hero"><div class="wrap">
+  <span class="badge">Redis · SDS</span>
+  <h1>SDS：带元数据的动态字符串</h1>
+  <p class="lead">SDS 是 Redis 常用的底层字节串：数据前面带长度和容量。所有 key、绝大多数字符串值、AOF 缓冲区和客户端缓冲区都会用到它。</p>
+</div></div>
 
-<div class="hero">
-  <div class="wrap">
-    <span class="badge">Redis · SDS</span>
-    <h1>Simple Dynamic String</h1>
-    <p class="lead">SDS —— Redis 中字符串的底层实现。所有的键、绝大多数的值、AOF 缓冲区与客户端缓冲区，最终都由它承载。它是一个「长得像 C 字符串，但自带元数据」的动态字节数组。String 类型（<a href="../string.html" style="color:#fff;text-decoration:underline;">类型页</a>）只是它最大的客户。</p>
-  </div>
-</div>
+<main class="wrap">
+  <nav class="toc" aria-label="页面目录">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">问题</div><div class="desc">C 字符串缺什么</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">结构</div><div class="desc">布局 · 字段 · 头部</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">追加</div><div class="desc">扩容 · 预分配 · 释放</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">细节</div><div class="desc">兼容性 · 使用位置</div></a>
+  </nav>
 
-<div class="wrap">
-
-  <div class="toc">
-    <a href="#part-1"><div class="num">PART 01</div><div class="name">痛点</div><div class="desc">C 字符串的三处致命缺陷</div></a>
-    <a href="#part-2"><div class="num">PART 02</div><div class="name">设计</div><div class="desc">布局 · 字段 · 扩容 · 选型</div></a>
-    <a href="#part-3"><div class="num">PART 03</div><div class="name">答疑</div><div class="desc">strcasecmp · sdshdr5</div></a>
-    <a href="#part-4"><div class="num">PART 04</div><div class="name">位置</div><div class="desc">SDS 出现在哪 · 与 String 的关系</div></a>
-  </div>
-
-  <div class="part-head" id="part-1">
-    <span class="part-tag">PART 01 · 痛点</span>
-    <h2 class="part-title">为什么 Redis 不直接用 C 字符串</h2>
-  </div>
-
-<section>
-  <h2>C 字符串的三个直接痛点</h2>
-  <p class="sub">C 字符串用 <code>\0</code> 作为结尾标志，简单但有三处硬伤；SDS 的头部三行元数据恰好逐一对应解决。</p>
-  <div class="card">
-    <table class="prob">
-      <thead>
-        <tr><th>C 字符串的问题</th><th>SDS 的机制</th></tr>
-      </thead>
+  <div class="part-head" id="part-1"><span class="part-tag">PART 01 · 问题</span><h2 class="part-title">C 字符串的问题，SDS 分别处理</h2></div>
+  <section>
+    <h2>C 字符串只靠 <code>\0</code> 判断结束</h2>
+    <p class="sub">它没有保存长度和容量。很多操作都要从头扫描，或依赖调用者自己处理边界。</p>
+    <div class="card"><table class="prob" style="margin-bottom:0;">
+      <thead><tr><th>问题</th><th>C 字符串</th><th>SDS 的做法</th></tr></thead>
       <tbody>
-        <tr>
-          <td class="q">求长度 <code>strlen()</code> 要遍历到 <code>\0</code>，<em>O(n)</em></td>
-          <td>头部直接存 <code>len</code>，取长这行代码是 <em>O(1)</em></td>
-        </tr>
-        <tr>
-          <td class="q">无法存储含 <code>\0</code> 的二进制数据（图片、序列化对象）</td>
-          <td>不看 <code>\0</code>，以 <code>len</code> 界定边界，<em>二进制安全</em></td>
-        </tr>
-        <tr>
-          <td class="q"><code>strcat</code> 不检查空间，可能<em>越界写</em>；每次追加都 <em>重分配内存</em></td>
-          <td>写入前检查 <code>alloc - len</code>，不够先扩容再写；预分配 + 惰性释放 <em>摊销 O(1)</em></td>
-        </tr>
+        <tr><td class="q">取长度</td><td><code>strlen</code> 扫到 <code>\0</code>，O(n)</td><td>直接读 <code>len</code>，O(1)</td></tr>
+        <tr><td class="q">二进制数据</td><td>中间的 <code>\0</code> 会被当成结束</td><td>真实边界由 <code>len</code> 决定；<code>\0</code> 可作为普通数据保存</td></tr>
+        <tr><td class="q">追加数据</td><td>调用者负责确认目标空间足够</td><td>先检查 <code>alloc - len</code>；不够就扩容</td></tr>
       </tbody>
-    </table>
-  </div>
-</section>
+    </table></div>
+  </section>
 
-<section>
-  <h2>不止 strcat：C 字符串函数族的问题</h2>
-  <p class="sub">strcat 只是最先暴露的一个——整个 C 字符串函数族共用同一个病根：<strong>长度不是字符串对象的一部分</strong>，任何边界知识都只能靠末尾那个 <code>\0</code> 现推。以 <code>\0</code> 为唯一边界，催生出四类问题。</p>
-  <div class="card" style="overflow-x:auto;">
-    <table class="prob" style="min-width: 520px;">
-      <thead>
-        <tr><th>维度</th><th>中弹的函数</th><th>根因</th><th>SDS 的解法</th></tr>
-      </thead>
+  <section>
+    <h2>常见 C 函数为什么容易出问题</h2>
+    <p class="sub">问题不是某一个函数，而是长度和容量不属于字符串对象本身。</p>
+    <div class="card" style="overflow-x:auto;"><table class="prob" style="min-width:560px;margin-bottom:0;">
+      <thead><tr><th>操作</th><th>典型函数</th><th>风险</th><th>SDS</th></tr></thead>
       <tbody>
-        <tr>
-          <td class="q">长度</td><td><code>strlen</code></td>
-          <td>靠遍历找 <code>\0</code>，O(n)；内存里若根本没有 <code>\0</code> 还会越界读</td>
-          <td><code>len</code> 字段 O(1)</td>
-        </tr>
-        <tr>
-          <td class="q">写入</td><td><code>strcpy</code> / <code>strcat</code> / <code>sprintf</code></td>
-          <td>不知道目标还剩多少空间——容量知识在调用者手里却不传递，写爆</td>
-          <td><code>alloc</code> 字段 + 写入前检查</td>
-        </tr>
-        <tr>
-          <td class="q">边界</td><td><code>strcmp</code> / <code>strstr</code> / <code>strchr</code></td>
-          <td>遇到 <code>\0</code> 提前停，比较与查找的范围比你以为的小</td>
-          <td>按 <code>len</code> 界定，不认 <code>\0</code></td>
-        </tr>
-        <tr>
-          <td class="q">状态</td><td><code>strtok</code></td>
-          <td>用静态指针保存遍历进度——不可重入、非线程安全，并发下结果不可预测</td>
-          <td>无状态，任意并发</td>
-        </tr>
+        <tr><td class="q">取长度</td><td><code>strlen</code></td><td>必须遍历；若没有 <code>\0</code>，可能越界读</td><td>读 <code>len</code></td></tr>
+        <tr><td class="q">写入</td><td><code>strcpy</code> / <code>strcat</code></td><td>不知道目标容量，可能越界写</td><td>读 <code>alloc</code> 后再写</td></tr>
+        <tr><td class="q">比较 / 查找</td><td><code>strcmp</code> / <code>strstr</code></td><td>在第一个 <code>\0</code> 提前停止</td><td>按 <code>len</code> 比较全部字节</td></tr>
+        <tr><td class="q">分词</td><td><code>strtok</code></td><td>内部保存状态，不可重入</td><td>SDS 本身只保存数据，不保存遍历状态</td></tr>
       </tbody>
-    </table>
-  </div>
+    </table></div>
 
-  <div class="case-card">
-    <div class="case-head"><span class="case-num">1</span><span class="case-title">strlen 的隐藏成本：strcat 自己也在调它</span></div>
-    <p><code>strlen</code> 不止自己 O(n)——看看 <code>strcat</code> 的源码，它<strong>内部</strong>就藏着一个 <code>strlen</code>：</p>
-    <pre><span class="k">char</span> *strcat(char *dest, <span class="k">const char</span> *src) {
-    size_t dlen = strlen(dest);  <span class="c">// 先从头扫一遍 dest 找尾巴</span>
-    memcpy(dest + dlen, src, strlen(src) + 1);
-    <span class="k">return</span> dest;
+    <div class="case-card" style="margin-top:16px;"><div class="case-head"><span class="case-num">1</span><span class="case-title">连续 strcat 为什么会慢</span></div>
+      <pre><span class="k">char</span> *strcat(char *dest, <span class="k">const char</span> *src) {
+  size_t dlen = strlen(dest);  <span class="c">// 每次先扫描已有内容</span>
+  memcpy(dest + dlen, src, strlen(src) + 1);
+  <span class="k">return</span> dest;
 }</pre>
-    <p>于是循环里连续 <code>strcat</code> n 次，每次都要重扫一份从头开始增长的 dest——<strong>O(n²)</strong>。SDS 的 <code>sdscat</code> 直接读 <code>len</code> 定位尾部，均摊 O(1)。这是两者性能拉开差距的第一个点。</p>
-  </div>
-
-  <div class="case-card">
-    <div class="case-head"><span class="case-num">2</span><span class="case-title">strncpy：名字像安全函数，其实不保证 \0</span></div>
-    <p>听名字像"限制拷贝长度"，实际上语义源自 1970 年代 UNIX 目录项的烂设计：</p>
-    <pre><span class="k">char</span> buf[8];
-strncpy(buf, <span class="g">"hello, world"</span>, 8);  <span class="c">// 拷 8 字节，最后一位还是 ' '，没有 \0！</span>
-printf(<span class="g">"%s"</span>, buf);                <span class="c">// 未定义行为：继续读 buf 后面直到撞见 \0</span></pre>
-    <ul>
-      <li><strong>不保证 <code>\0</code> 终止</strong>——n 字节塞满就没有哨兵，后续任何函数全部跟着失效</li>
-      <li>源短时**用 <code>\0</code> 填充**补满 n 字节——性能白扔，填充是 <code>memset</code> 的活</li>
-      <li>源长时**静默截断**——不报错、不提示</li>
-    </ul>
-    <span class="warn">Linus 曾直言 strncpy 是"历史遗留的垃圾"；后来 BSD 才给出 strlcpy：始终保证终止、截断可检测</span>
-  </div>
-
-  <div class="case-card">
-    <div class="case-head"><span class="case-num">3</span><span class="case-title">strcmp：遇到 \0 就提前缩水</span></div>
-    <pre><span class="k">strcmp</span>(<span class="g">"abc\0def"</span>, <span class="g">"abc"</span>) == 0   <span class="c">// 返回相等——但两个串明明不同！</span></pre>
-    <p>第一个 <code>\0</code> 就停，所以含内嵌 NUL 的序列（图片、序列化对象、协议数据）<strong>比不了</strong>，还可能越界读。二进制数据的正确姿势是<b>逐字节</b>：<code>memcmp(buf1, buf2, len)</code> + 长度先行判断——这正是 <code>sdscmp</code> 干的事。</p>
-  </div>
-
-  <div class="card">
-    <div class="memlabel" style="margin-top:0;">C 三问三答 vs SDS 三字段</div>
-    <div class="recap-row">
-      <div class="side c">C 字符串</div>
-      <div class="pair"><b>长度？</b>扫一遍找 \0，O(n)</div>
-      <div class="pair"><b>容量？</b>不知道</div>
-      <div class="pair"><b>边界？</b>靠 \0 现推</div>
+      <p>循环追加 n 次时，<code>dest</code> 会越来越长，但每次都从头扫描一次。总成本可变成 O(n²)。SDS 直接用 <code>len</code> 找到写入位置。</p>
     </div>
-    <div class="recap-row">
-      <div class="side s">SDS</div>
-      <div class="pair ok"><b>len</b> 字段</div>
-      <div class="pair ok"><b>alloc</b> 字段</div>
-      <div class="pair ok"><b>len</b> 界定</div>
+    <div class="case-card"><div class="case-head"><span class="case-num">2</span><span class="case-title">strncpy 不一定补上结束符</span></div>
+      <pre><span class="k">char</span> buf[8];
+strncpy(buf, <span class="g">"hello, world"</span>, 8);  <span class="c">// buf 没有 \0</span>
+printf(<span class="g">"%s"</span>, buf);                <span class="c">// 会继续读 buf 后面的内存</span></pre>
+      <ul><li>源字符串长度至少为 n 时，结果不会自动以 <code>\0</code> 结束。</li><li>源字符串较短时，它会继续填充 <code>\0</code>。</li><li>源字符串较长时会截断，调用者必须自己判断。</li></ul>
     </div>
-  </div>
-</section>
-
-  <div class="part-head" id="part-2">
-    <span class="part-tag">PART 02 · 设计</span>
-    <h2 class="part-title">SDS 的结构与机制</h2>
-  </div>
-
-<section>
-  <h2>内存布局对比</h2>
-  <p class="sub">同一个字符串 <code>"redis"</code>：C 字符串只有数据；SDS 在数据前多了 3~17 字节的头部。</p>
-  <div class="card memcard">
-    <div class="memlabel">① C 字符串 —— 只有数据，元信息靠遍历</div>
-    <div class="mem">
-      <div class="seg seg-null" style="border-style: solid;"><span class="c">r</span></div>
-      <div class="seg seg-null" style="border-style: solid;"><span class="c">e</span></div>
-      <div class="seg seg-null" style="border-style: solid;"><span class="c">d</span></div>
-      <div class="seg seg-null" style="border-style: solid;"><span class="c">i</span></div>
-      <div class="seg seg-null" style="border-style: solid;"><span class="c">s</span></div>
-      <div class="seg seg-red"><code>\0</code><span>终止符</span></div>
+    <div class="case-card"><div class="case-head"><span class="case-num">3</span><span class="case-title">strcmp 无法比较二进制内容</span></div>
+      <pre>strcmp(<span class="g">"abc\0def"</span>, <span class="g">"abc"</span>) == 0  <span class="c">// 被当作相等</span></pre>
+      <p><code>strcmp</code> 在第一个 <code>\0</code> 停止。二进制数据应先比较长度，再使用 <code>memcmp</code>；SDS 的比较也以 <code>len</code> 为准。</p>
     </div>
-    <span class="arrow">↑ 不知道长度时，只能一个字节一个字节往后找到这块 <code>\0</code> —— 这就是 <code>strlen</code> 的 O(n)，也是不能存二进制数据的原因</span>
+  </section>
 
-    <div class="memlabel">② SDS（以 sdshdr8 为例）—— 头部三行元数据 + 数据</div>
-    <div class="mem">
-      <div class="seg seg-amber"><span>len</span><em>1 B</em><code>5</code></div>
-      <div class="seg seg-blue"><span>alloc</span><em>1 B</em><code>11</code></div>
-      <div class="seg seg-green"><span>flags</span><em>1 B</em><code>0x01</code></div>
-      <div class="seg seg-red" style="background: var(--green);"><span class="c">r e d i s</span></div>
-      <div class="seg seg-red" style="background: transparent; border: 1.5px dashed var(--green); color: var(--green); flex: 0 0 110px;">
-        <span class="c">空闲空间</span><span class="free">预留内存</span>
+  <div class="part-head" id="part-2"><span class="part-tag">PART 02 · 结构</span><h2 class="part-title">SDS 把长度和容量放在数据前面</h2></div>
+  <section>
+    <h2>内存布局：<code>redis</code></h2>
+    <p class="sub">以下是 <code>sdshdr8</code> 的例子：数据用了 5 B，总容量是 11 B。</p>
+    <div class="card memcard"><div class="memlabel">一块连续内存</div>
+      <div class="mem">
+        <div class="seg seg-amber" style="flex:0 0 78px;"><span>len</span><em>1 B</em><code>5</code></div>
+        <div class="seg seg-blue" style="flex:0 0 78px;"><span>alloc</span><em>1 B</em><code>11</code></div>
+        <div class="seg seg-green" style="flex:0 0 78px;"><span>flags</span><em>1 B</em><code>类型</code></div>
+        <div class="seg seg-green"><span>buf</span><span class="c">r e d i s</span></div>
+        <div class="seg seg-null" style="flex:0 0 110px;"><span>空闲 6 B</span></div>
+        <div class="seg seg-red" style="flex:0 0 48px;"><code>\0</code></div>
       </div>
-      <div class="seg seg-null"><code>\0</code></div>
+      <span class="arrow">↑ <code>len</code> 决定真实边界；<code>alloc</code> 决定能装多少；结尾的 <code>\0</code> 只用于兼容 C 字符串函数。</span>
     </div>
-    <span class="arrow">↑ 尾部仍保留 <code>\0</code>：为了让 SDS 可以直接传给 <code>strcasecmp()</code> 等 C 库函数，兼容旧生态</span>
-
-    <div class="legend">
-      <span><i style="background: var(--amber);"></i>len · 已用长度</span>
-      <span><i style="background: var(--blue);"></i>alloc · 已分配容量</span>
-      <span><i style="background: var(--green);"></i>flags / 数据区</span>
-      <span><i style="background: var(--code-bg); border: 1px solid var(--muted);"></i>\0 哨兵</span>
+    <div class="fields" style="margin-top:16px;">
+      <div class="field"><h3><code>len</code></h3><div class="type">已使用字节数</div><p>不含末尾 <code>\0</code>。取长度 O(1)，也让 SDS 能保存内嵌 <code>\0</code>。</p></div>
+      <div class="field"><h3><code>alloc</code></h3><div class="type">数据区总容量</div><p>不含头部与末尾 <code>\0</code>。剩余空间是 <code>alloc - len</code>。</p></div>
+      <div class="field"><h3><code>flags</code></h3><div class="type">头部类型</div><p>低 3 位标记头部类型。Redis 据此知道 <code>len</code> / <code>alloc</code> 的字段宽度。</p></div>
     </div>
-  </div>
-</section>
-
-<section>
-  <h2>头部三行元数据，各自解决一件事</h2>
-  <p class="sub">结构体定义（src/sds.h），注意 <code>__packed__</code>：取消内存对齐，字段紧密排列、头部尽量小。</p>
-  <div class="fields">
-    <div class="field">
-      <h3><code>len</code></h3>
-      <div class="type">uint8_t · 已使用字节数（不含 \0）</div>
-      <p>O(1) 取长度的来源。也决定了数据的真实边界 —— 哪怕中间有 <code>\0</code>，也只认 <code>len</code>，这就是二进制安全。</p>
-    </div>
-    <div class="field">
-      <h3><code>alloc</code></h3>
-      <div class="type">uint8_t · 已分配容量（不含头部与 \0）</div>
-      <p>「还能追加多少空间」随时可见：<code>alloc - len</code> 就是剩余量。追加前先检查，不够就扩容再写，天然避开缓冲区溢出。</p>
-    </div>
-    <div class="field">
-      <h3><code>flags</code></h3>
-      <div class="type">uint8_t · 低位 3 bit 标记类型</div>
-      <p>标记这是一块 sdshdr5 / 8 / 16 / 32 / 64。按字符串长度自动选最小头部，让 <code>"cat"</code> 和 <code>10MB</code> 的字符串都不过度浪费。</p>
-    </div>
-  </div>
-  <div class="note">头部大小随类型而变，<code>buf</code> 紧跟在 <code>flags</code> 之后 —— 代码里用 <code>char buf[]</code> 柔性数组，头部和数据同一次分配、连续内存，缓存友好。</div>
-</section>
-
-<section>
-  <h2>一次追加：预分配怎么运作</h2>
-  <p class="sub">字符串 <code>s</code>（sdshdr8）当前是 <code>"hello"</code>，执行 <code>sdscat(s, " world")</code>：</p>
-  <div class="grow">
-    <div class="card">
-      <div class="step">
-        <div class="n">1</div>
-        <div>
-          <h4>检查剩余空间</h4>
-          <p><code>alloc - len = 5 - 5 = 0</code>，而要追加 6 字节 —— 不够，需要扩容。</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="n">2</div>
-        <div>
-          <h4>按规则扩容（sdsMakeRoomFor）</h4>
-          <p><code>newlen = 5 + 6 = 11</code>，小于 1MB，所以 <code>newlen = 11 × 2 = 22</code>。</p>
-          <div class="change">分配：头部 3 B + 数据 22 B + 哨兵 \0 1 B</div>
-        </div>
-      </div>
-      <div class="step">
-        <div class="n">3</div>
-        <div>
-          <h4>写入，更新元数据</h4>
-          <p><code>alloc = 22，len = 11</code>，数据写进 <code>buf</code>，末尾补 <code>\0</code>。</p>
-          <div class="change">剩余 11 字节 —— 之后哪怕再追加 11 个字符，也零分配零拷贝</div>
-        </div>
-      </div>
-    </div>
-    <pre><span class="k">sds</span> sdsMakeRoomFor(sds s, size_t addlen) {
-  <span class="g">if</span> (sdsalloc(s) - sdslen(s) &gt;= addlen)
-    <span class="g">return s;</span>          <span class="c">// 剩余够用：直接返回，零分配</span>
-
-  newlen = sdslen(s) + addlen;  <span class="c">// 需要的最小长度</span>
-  <span class="g">if</span> (newlen &lt; 1MB)
-    newlen *= 2;                <span class="c">// &lt; 1MB：翻倍扩容</span>
-  <span class="g">else</span>
-    newlen += 1MB;              <span class="c">// &gt; 1MB：每次固定 +1MB</span>
-
-  <span class="c">// 重分配内存 → 抄数据 → 迁移头部</span>
-  <span class="k">return</span> new_sds_hdr(newlen, s);
-}</pre>
-  </div>
-  <div class="note">逐次追加在最坏情况下仍是 O(n)（扩容要搬数据），但翻倍策略让「上一轮多留的空间」覆盖接下来若干次追加 —— 均摊下来每次追加是 O(1)，代价是偶尔一次 O(n)。</div>
-</section>
-
-<section>
-  <h2>五种头部：按长度自动选择</h2>
-  <p class="sub">同样的逻辑，针对不同长度的字符串用不同的字段宽度 —— 这也是「元数据有成本」的最终解法。sdshdr5 比较特殊：长度直接存在 <code>flags</code> 的高 5 位（最多 31），不单独占字段，且不可扩容 —— 一旦需要追加，就地升级成 sdshdr8。</p>
-  <div class="card" style="overflow-x:auto;">
-    <table class="types">
-      <thead>
-        <tr><th>类型</th><th>头部大小</th><th>len / alloc 宽度</th><th>最大长度</th><th>适用</th></tr>
-      </thead>
+    <div class="note"><strong>实现要点：</strong>头部结构体使用 <code>__packed__</code>，减少对齐填充；<code>buf[]</code> 是柔性数组，头部和数据一次分配、连续存放。</div>
+  </section>
+  <section>
+    <h2>五种头部，按字符串长度选</h2>
+    <p class="sub">短字符串不需要 8 字节长度字段；长字符串也不能只用 1 字节。SDS 让头部随长度变化。</p>
+    <div class="card" style="overflow-x:auto;"><table class="types" style="min-width:620px;">
+      <thead><tr><th>类型</th><th>头部</th><th>len / alloc</th><th>最大长度</th><th>特点</th></tr></thead>
       <tbody>
-        <tr><td>sdshdr5</td><td>1 B</td><td>编码在 flags 高 5 位</td><td>31</td><td>短键短值，只读</td></tr>
-        <tr><td>sdshdr8</td><td>3 B</td><td>1 + 1 B</td><td>255</td><td>绝大多数键值</td></tr>
-        <tr><td>sdshdr16</td><td>5 B</td><td>2 + 2 B</td><td>65,535</td><td>中等字符串</td></tr>
-        <tr><td>sdshdr32</td><td>9 B</td><td>4 + 4 B</td><td>4,294,967,295</td><td>大字符串</td></tr>
-        <tr><td>sdshdr64</td><td>17 B</td><td>8 + 8 B</td><td>2⁶⁴ - 1</td><td>超大值</td></tr>
+        <tr><td>sdshdr5</td><td>1 B</td><td>长度存在 flags 高 5 位</td><td>31 B</td><td>没有 alloc，不能原地扩容</td></tr>
+        <tr><td>sdshdr8</td><td>3 B</td><td>1 B + 1 B</td><td>255 B</td><td>短字符串</td></tr>
+        <tr><td>sdshdr16</td><td>5 B</td><td>2 B + 2 B</td><td>65,535 B</td><td>中等字符串</td></tr>
+        <tr><td>sdshdr32</td><td>9 B</td><td>4 B + 4 B</td><td>4,294,967,295 B</td><td>大字符串</td></tr>
+        <tr><td>sdshdr64</td><td>17 B</td><td>8 B + 8 B</td><td>2⁶⁴ − 1 B</td><td>超大字符串</td></tr>
       </tbody>
-    </table>
-  </div>
-  <p class="sub" style="margin-top:14px;">「惰性释放」是预分配的另一面：<code>sdsclear()</code> 只把 <code>len</code> 清零、留下空间，真正释放内存要等显式 <code>sdsRemoveFreeSpace()</code> —— 频繁清空/重建的场景因此免掉大量分配与释放。</p>
-</section>
+    </table></div>
+    <div class="note"><strong>sdshdr5 的特殊点：</strong>flags 的高 5 位存长度，低 3 位存类型。因此它没有单独的 <code>alloc</code> 字段；需要追加时会创建更大的 SDS，而不是在原地扩容。</div>
+  </section>
 
-  <div class="part-head" id="part-3">
-    <span class="part-tag">PART 03 · 答疑</span>
-    <h2 class="part-title">延伸追问</h2>
-  </div>
-
-<section>
-  <h2>两个常被追问的问题</h2>
-  <p class="sub">看源码和面试里都会反复出现的细节。</p>
-  <div class="qa-card">
-    <div class="qa-q"><span class="qa-badge">Q</span>strcasecmp 是干什么的函数？</div>
-    <div class="qa-a">
-      <p><code>strcasecmp</code> 是 C 标准库（POSIX）里的<strong>大小写不敏感字符串比较</strong>函数，与 <code>strcmp</code> 的唯一区别是忽略大小写（<code>'A'</code> 与 <code>'a'</code> 视为相等），返回 0 表示相等。</p>
-      <ul>
-        <li><strong>Redis 里用它干什么：</strong>比较命令名与协议参数——<code>SET</code>/<code>set</code>/<code>Set</code> 都是合法命令，cmd 查找就是 NOCASE 匹配。</li>
-        <li><strong>与 SDS 的关系：</strong>SDS 的 <code>buf</code> 末尾保留 <code>\0</code>，正是为了能直接把 <code>s-&gt;buf</code> 传给这类 C 库函数，免去先拷贝成真 C 字符串。</li>
-        <li><strong>局限：</strong>它比较到第一个 <code>\0</code> 就停，所以只适合纯文本。含二进制（如存了图片）的 SDS 要用 <code>sdscmp</code>——按 <code>len</code> 逐字节比较，不看 <code>\0</code>。</li>
-      </ul>
+  <div class="part-head" id="part-3"><span class="part-tag">PART 03 · 追加</span><h2 class="part-title">SDS 用预分配减少重复扩容</h2></div>
+  <section>
+    <h2><code>hello</code> 追加 <code> world</code></h2>
+    <p class="sub">初始：<code>len=5</code>、<code>alloc=5</code>。要追加的内容长度是 6 B。</p>
+    <div class="grow">
+      <div class="card">
+        <div class="step"><div class="n">1</div><div><h4>检查空闲空间</h4><p><code>alloc - len = 5 - 5 = 0</code>。空闲 0 B，追加需要 6 B，所以不能直接写。</p></div></div>
+        <div class="step"><div class="n">2</div><div><h4>计算新容量</h4><p>最少需要 <code>5 + 6 = 11 B</code>。小于 1 MB 时，SDS 将容量翻倍到 22 B。</p><div class="change">实际还会计入头部与结尾 <code>\0</code> 的内存。</div></div></div>
+        <div class="step"><div class="n">3</div><div><h4>写数据，更新元数据</h4><p>写完：<code>len=11</code>、<code>alloc=22</code>。后面还剩 11 B 可用。</p></div></div>
+      </div>
+      <div class="card memcard"><div class="memlabel">扩容后的数据区</div>
+        <div class="mem">
+          <div class="seg seg-amber" style="flex:0 0 70px;"><span>len</span><code>11</code></div>
+          <div class="seg seg-blue" style="flex:0 0 70px;"><span>alloc</span><code>22</code></div>
+          <div class="seg seg-green"><span>buf</span><span class="c">h e l l o · w o r l d</span></div>
+          <div class="seg seg-null" style="flex:0 0 92px;"><span>空闲 11 B</span></div>
+        </div>
+        <span class="arrow">↑ 接下来追加不超过 11 B 时，不需要再次分配内存。</span>
+      </div>
     </div>
-  </div>
+    <div class="case-card" style="margin-top:16px;"><div class="case-head"><span class="case-num">核心</span><span class="case-title">sdsMakeRoomFor 的判断</span></div>
+      <pre><span class="k">if</span> (alloc - len &gt;= addlen)
+  <span class="k">return</span> s;                  <span class="c">// 空间够，直接写</span>
 
-  <div class="qa-card">
-    <div class="qa-q"><span class="qa-badge">Q</span>为什么 sdshdr5 的 len / alloc 编码在 flags 高 5 位？</div>
-    <div class="qa-a">
-      <p>先纠正一个措辞：<strong>len 编码在 flags 高 5 位；alloc 这个类型根本不存在</strong>。sdshdr5 的完整头部只有一个字节：低 3 位存类型，高 5 位存长度。</p>
+newlen = len + addlen;
+<span class="k">if</span> (newlen &lt; 1MB)
+  newlen *= 2;                 <span class="c">// 小于 1 MB：翻倍</span>
+<span class="k">else</span>
+  newlen += 1MB;               <span class="c">// 达到 1 MB：每次多留 1 MB</span></pre>
+      <p>扩容那一次仍可能复制已有数据，成本是 O(n)。但多数追加会使用提前预留的空间，所以连续追加的平均成本是 O(1)。</p>
+    </div>
+  </section>
+  <section>
+    <h2>缩短字符串时，空间通常先保留</h2>
+    <p class="sub">这是惰性释放：减少频繁分配和释放内存，但也会暂时占着不用的空间。</p>
+    <div class="flow">
+      <div class="fl"><div class="side">原状态</div><div><code>len=100</code>，<code>alloc=100</code><span>数据区满。</span></div></div>
+      <div class="fl-arr">↓</div>
+      <div class="fl"><div class="side">清空</div><div><code>sdsclear(s)</code>：<code>len=0</code><span>通常保留已有的 <code>alloc=100</code>。</span></div></div>
+      <div class="fl-arr">↓</div>
+      <div class="fl"><div class="side">再次追加</div><div>优先复用这 100 B<span>避免重新申请内存。</span></div></div>
+    </div>
+    <div class="note"><strong>需要真的释放时：</strong>调用 <code>sdsRemoveFreeSpace()</code>。它会把容量缩到接近当前长度。</div>
+  </section>
+
+  <div class="part-head" id="part-4"><span class="part-tag">PART 04 · 细节</span><h2 class="part-title">兼容 C 生态，也服务 Redis 的多处存储</h2></div>
+  <section>
+    <h2>为什么 SDS 还保留结尾 <code>\0</code></h2>
+    <p class="sub">SDS 不依赖它判断边界，但保留它可以直接调用部分 C 字符串函数。</p>
+    <div class="qa-card"><div class="qa-q"><span class="qa-badge">Q</span><code>strcasecmp</code> 和 SDS 有什么关系？</div><div class="qa-a">
+      <p><code>strcasecmp</code> 是 POSIX 的大小写不敏感字符串比较函数：<code>SET</code>、<code>set</code>、<code>Set</code> 会被视为相同。</p>
+      <ul><li>SDS 的 <code>buf</code> 末尾有 <code>\0</code>，纯文本场景可以直接传给这类函数。</li><li>它仍会在第一个 <code>\0</code> 停止，因此不能用来比较包含二进制数据的 SDS。</li><li>二进制数据按 <code>len</code> 比较，例如使用 SDS 自己的比较函数。</li></ul>
+    </div></div>
+    <div class="qa-card"><div class="qa-q"><span class="qa-badge">Q</span>为什么 <code>sdshdr5</code> 把长度放进 flags？</div><div class="qa-a">
+      <p><code>flags</code> 的低 3 位本来就要记录头部类型。<code>sdshdr5</code> 把剩下的高 5 位用于存 <code>len</code>，所以 1 B 头部同时保存类型和长度。</p>
       <pre>+----------------+------------------+
-| 高 5 位 (len)   | 低 3 位 (type)    |
-| 0..31          | SDS_TYPE_5 = 0    |
+| 高 5 位：len    | 低 3 位：type    |
+| 0 ~ 31          | SDS_TYPE_5       |
 +----------------+------------------+</pre>
-      <ul>
-        <li><strong>动机：短字符串占绝对多数。</strong>头部从 3 字节（sdshdr8）变成 1 字节，在数亿个 key 上是数百 MB 级别的差距。</li>
-        <li><strong>len 占的是 flags 里空出来的位。</strong>无论哪种类型，标识类型的 <code>flags</code> 字节都存在；低 3 位放类型（5 种类型 3 位够用）后，高 5 位空着也是空着——于是长度有了零成本存储，头部总量仍是 1 字节。</li>
-        <li><strong>为什么上限是 31：</strong>5 位二进制最大值就是 31，是自然边界，恰好覆盖绝大多数 key/value 的短字符串。</li>
-        <li><strong>代价：</strong>一个字节装不下 alloc，<code>sdsalloc()</code> 对它返回 0（剩余空间恒为 0，不可扩容）。一旦 append，<code>sdsMakeRoomFor</code> 直接把整个字符串升级成 sdshdr8（3 字节头部），之后不会再降级。连 <code>sdsclear</code> 都有特殊分支：长度存在 flags 里没法原地清零，只能 <code>sdsnewlen("", 0)</code> 新建空串。</li>
-      </ul>
+      <ul><li>好处：长度不超过 31 B 的字符串只用 1 B 头部。</li><li>代价：没有 <code>alloc</code>，没有可复用的空闲空间。</li><li>一旦要追加，Redis 会换成能保存 <code>alloc</code> 的更大头部；不会再换回 <code>sdshdr5</code>。</li></ul>
+    </div></div>
+  </section>
+  <section>
+    <h2>SDS 在 Redis 里出现在哪里</h2>
+    <p class="sub">记住这几个位置，就能区分“类型”和“存储结构”。</p>
+    <div class="chips"><span class="chip">所有 key</span><span class="chip">String 的 embstr / raw 值</span><span class="chip">hash / set / zset 的字符串成员</span><span class="chip">AOF 缓冲区</span><span class="chip">客户端输入 / 输出缓冲区</span></div>
+    <div class="card" style="margin-top:18px;"><span class="memlabel" style="margin-top:0;">SDS 与 String 类型的关系</span>
+      <div class="flow">
+        <div class="fl"><div class="side">命令</div><div><code>SET name redis</code><span>用户看到的是 String 命令。</span></div></div><div class="fl-arr">↓</div>
+        <div class="fl"><div class="side">对象</div><div><code>robj.type = OBJ_STRING</code><span>Redis 先创建一个 String 类型对象。</span></div></div><div class="fl-arr">↓</div>
+        <div class="fl"><div class="side">编码</div><div><code>embstr</code> 或 <code>raw</code><span>普通字符串值常用这两种编码。</span></div></div><div class="fl-arr">↓</div>
+        <div class="fl"><div class="side">存储</div><div>SDS<span>实际字节、长度和容量在这里。</span></div></div>
+      </div>
+      <p style="font-size:14px;margin-top:14px;"><strong>例外：</strong>纯整数值可用 <code>int</code> 编码，直接保存整数，不创建 SDS。完整编码选择见 <a href="../string.html">string.html</a>；对象外壳见 <a href="obj.html">obj.html</a>。</p>
     </div>
-  </div>
-</section>
-
-  <div class="part-head" id="part-4">
-    <span class="part-tag">PART 04 · 位置</span>
-    <h2 class="part-title">SDS 在 Redis 中的位置</h2>
-  </div>
-
-<section>
-  <h2>SDS 出现在哪里</h2>
-  <p class="sub">记住这些位置，就明白两件事：为什么 key 没有编码、为什么二进制安全如此重要。</p>
-  <div class="chips">
-    <span class="chip">所有 key</span>
-    <span class="chip">String 类型 value（embstr / raw 编码）</span>
-    <span class="chip">list / hash / zset 的底层元素（如 hashtable 编码）</span>
-    <span class="chip">AOF 缓冲区</span>
-    <span class="chip">客户端输入 / 输出缓冲区</span>
-    <span class="chip">命令名比较</span>
-  </div>
-
-  <div class="card" style="margin-top:18px;">
-    <span class="memlabel" style="margin-top:0;">与 String 类型的关系（一句话版）</span>
-    <p style="font-size:14px;">String 类型是语义层：<code>robj.type = OBJ_STRING</code> + 编码（<code>int</code>/<code>embstr</code>/<code>raw</code>）。SDS 是物理层：embstr/raw 两种编码的 value 直接就是一块 SDS。int 编码的值（纯数字）是唯一的例外——唯一不经过 SDS 的 String。完整关系图（四层穿透）见 <a href="../string.html">string.html</a>，对象外壳见 <a href="obj.html">obj.html</a>。「为什么 String 必须是一段字节数组」背后的答案就是本页 PART 01 的<strong>二进制安全</strong>：一个字节都不得变形。</p>
-  </div>
-</section>
-
-</div>
-
-<footer>
-  <div class="navlinks">
-    <a href="../index.html">← 目录</a>
-    <a href="../string.html">String 类型 · string.html →</a>
-    <a href="obj.html">robj 外壳 · obj.html →</a>
-  </div>
-  Redis 自学笔记 · SDS（sds.h · 简单动态字符串）
-</footer>
-
+  </section>
+</main>
 </body>
 </html>
