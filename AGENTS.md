@@ -4,7 +4,7 @@
 - `index.html` — 站点根首页，简要介绍两个模块
 - `agent/` — AI Agent 主题，`index.html` 为模块入口，`what-is-agent.html` 为概念页
 - `redis/` — Redis 主题，`index.html` 为类型×编码×结构索引
-- `redis/internals/` — Redis 底层结构实现笔记（SDS / dict / listpack / robj）
+- `redis/data-structures/` — Redis 底层结构实现笔记（SDS / dict / listpack / robj）
 - `theme.css` — 全站共享主题样式（根目录，所有页面按层级用相对路径引用）
 
 文件命名统一为 `<topic>.html`，**不使用 `-v2` 等版本后缀**。每个模块（`agent/`、`redis/`）都有一份 `index.html` 作为入口；新增页面后需同步更新所属模块的 `index.html`，并在首页 `index.html` 酌情补充说明。
@@ -31,7 +31,7 @@
 ## Testing Guidelines
 没有自动化测试。提交前手动验证：
 1. 打开页面，检查标题、目录锚点和正文渲染
-2. 确认所有相对链接有效（`agent/`、`agent/`、`redis/`、`redis/internals/` 内页面正确引用根目录 `theme.css`）
+2. 确认所有相对链接有效（`agent/`、`agent/`、`redis/`、`redis/data-structures/` 内页面正确引用根目录 `theme.css`）
 3. 在浅色与深色主题下各检查一次
 4. 在窄屏宽度下确认表格和代码块无横向溢出
 5. 推送后查看 GitHub Actions 或 Pages 构建状态，确认线上地址可访问
