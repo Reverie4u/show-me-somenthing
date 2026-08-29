@@ -18,18 +18,18 @@
   var TREE = [
     { label: 'Agent', children: [
       { label: '什么是 AI Agent', href: 'agent/what-is-agent.html' },
+      { label: '核心组件', children: [
+        { label: 'LLM 核心', href: 'agent/core/llm.html' },
+        { label: '工具系统', href: 'agent/core/tools.html' },
+        { label: '记忆与状态', href: 'agent/core/memory.html' },
+        { label: '规划与决策', href: 'agent/core/planning.html' }
+      ] },
       { label: '范式', children: [
         { label: 'ReAct', href: 'agent/patterns/react.html' },
         { label: 'Plan-and-Execute', href: 'agent/patterns/plan-execute.html' },
         { label: 'CoT · ToT · GoT', href: 'agent/patterns/reasoning.html' },
         { label: 'Reflection', href: 'agent/patterns/reflection.html' },
         { label: 'LLM任务拆分', href: 'agent/patterns/tasksplit.html' }
-      ] },
-      { label: '核心组件', children: [
-        { label: 'LLM 核心', href: 'agent/core/llm.html' },
-        { label: '工具系统', href: 'agent/core/tools.html' },
-        { label: '记忆与状态', href: 'agent/core/memory.html' },
-        { label: '规划与决策', href: 'agent/core/planning.html' }
       ] },
       { label: 'multi-agent', children: [
         { label: 'Handoff', href: 'agent/multi-agent/handoff.html' },
@@ -85,8 +85,12 @@
     var sidebar = document.createElement('aside');
     sidebar.id = 'sidebar';
     sidebar.className = 'sidebar';
-    sidebar.innerHTML = '<div class="sidebar-brand"><span class="mark"></span>自学笔记</div>' +
+    sidebar.innerHTML = '<a class="sidebar-brand" href="' + root + 'index.html"><span class="mark"></span>自学笔记</a>' +
       '<nav class="tree">' + render(root, TREE) + '</nav>';
+
+    // 根首页若放有 #site-directory，则把同一份目录渲染进去
+    var dir = document.getElementById('site-directory');
+    if (dir) dir.innerHTML = '<nav class="tree">' + render(root, TREE) + '</nav>';
     var content = document.createElement('div');
     content.className = 'content';
 
