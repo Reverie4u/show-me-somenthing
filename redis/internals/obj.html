@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>robj · Redis Object 对象外壳</title>
+<link rel="stylesheet" href="../theme.css">
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge">Redis · robj</span>
+    <h1>robj —— 16 字节的对象外壳</h1>
+    <p class="lead">数据库里每个 value 都包在一个 <code>redisObject</code> 里。它<strong>不负责任存数据</strong>：只回答三个问题——「这是什么类型」（type）、「用什么内存结构」（encoding）、「最近是否被访问、还有谁引用」（lru / refcount）。数据在哪，问 <code>ptr</code>。</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="toc">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">结构</div><div class="desc">16 字节是怎么拼出来的</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">字段</div><div class="desc">type · encoding · lru · refcount</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">编码表</div><div class="desc">类型 × 编码 × 结构</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">指针</div><div class="desc">ptr 的两种用法 · 共享整数</div></a>
+  </div>
+
+  <div class="part-head" id="part-1">
+    <span class="part-tag">PART 01 · 结构</span>
+    <h2 class="part-title">16 字节是怎么拼出来的</h2>
+  </div>
+
+<section>
+  <h2>位域字段，一个字节都不浪费</h2>
+  <p class="sub">三个「小」字段用位域塞进同一个 4 字节里，加上 <code>refcount</code> 和 <code>ptr</code>，正好 16 字节——约等于两个指针的开销。</p>
+  <div class="card memcard">
+    <div class="mem">
+      <div class="seg seg-amber" style="flex: 0 0 58px;"><span>type</span><em>4 bit</em><span>OBJ_STRING</span></div>
+      <div class="seg seg-blue" style="flex: 0 0 58px;"><span>encoding</span><em>4 bit</em><span>EMBSTR</span></div>
+      <div class="seg seg-green" style="flex: 0 0 58px;"><span>lru</span><em>24 bit</em><span>时间戳</span></div>
+      <div class="seg seg-amber" style="flex: 0 0 58px;"><span>refcount</span><em>4 B</em><span>3</span></div>
+      <div class="seg seg-red" style="flex: 0 0 58px;"><span>ptr</span><em>8 B</em><code>▶</code></div>
+      <div class="seg seg-null" style="flex: 1 1 auto;"><span>…</span><span class="free">4+4+24 = 32 bit</span></div>
+    </div>
+    <span class="arrow">↑ 前面 4 字节是位域打包：type 4 bit + encoding 4 bit + lru 24 bit；中间 refcount 4 字节；最后 ptr 8 字节 —— 共 16 字节</span>
+    <div class="legend">
+      <span><i style="background: var(--amber);"></i>type + refcount</span>
+      <span><i style="background: var(--blue);"></i>encoding</span>
+      <span><i style="background: var(--green);"></i>lru</span>
+      <span><i style="background: var(--red);"></i>ptr · 指向数据</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <pre><span class="k">typedef struct</span> redisObject {
+    unsigned type:4;      <span class="c">/* 语义类型：OBJ_STRING / OBJ_LIST / OBJ_HASH ... */</span>
+    unsigned encoding:4;  <span class="c">/* 内存编码：INT / EMBSTR / RAW / LISTPACK / SKIPLIST ... */</span>
+    unsigned lru:24;      <span class="c">/* LRU 时间戳或 LFU 计数器 · 淘汰算法用 */</span>
+    <span class="k">int</span> refcount;         <span class="c">/* 引用计数 · 共享对象用 */</span>
+    <span class="k">void</span> *ptr;            <span class="c">/* 8 字节 · 指向真实数据（或就是数据本身） */</span>
+} robj;</pre>
+    <div class="note" style="margin-top: 12px;">「位域 + refcount + 指针」是每个 value 的固定开销：16 字节——换来所有 value 统一的生命周期管理（淘汰看 lru、共享看 refcount、命令分派看 type）。</div>
+  </div>
+</section>
+
+  <div class="part-head" id="part-2">
+    <span class="part-tag">PART 02 · 字段</span>
+    <h2 class="part-title">四个字段，各司其职</h2>
+  </div>
+
+<section>
+  <div class="fields">
+    <div class="field">
+      <h3><code>type</code></h3>
+      <div class="type">4 bit · 语义类型</div>
+      <p>用户视角的「这是什么」：string、list、hash、set、zset。命令分派先看它——<code>LPUSH</code> 绝不会作用在 string 上。这个字段定义了「类型体系」本身：核心类型就这 5 个，stream 是后来加的第 6 个，插件（模块）还能自定义。</p>
+    </div>
+    <div class="field">
+      <h3><code>encoding</code></h3>
+      <div class="type">4 bit · 内存编码</div>
+      <p>实现细节的「存成什么样」：同样 type=STRING，短的纯数字可以是 INT、短文本 EMBSTR、长内容 RAW——命令一个样，底层内存结构差别迥异。<code>OBJECT ENCODING</code> 命令返回的就是它。编码详情见 PART 03 表。</p>
+    </div>
+    <div class="field">
+      <h3><code>lru</code> + <code>refcount</code></h3>
+      <div class="type">24 bit + 32 bit · 生命周期</div>
+      <p>lru 记录最近访问时刻（LRU / LFU 淘汰算法决策用）；refcount 让共享成为可能——见 PART 04「共享整数表」。它们与数据本身无关，属于统一的生命周期管理。</p>
+    </div>
+  </div>
+</section>
+
+  <div class="part-head" id="part-3">
+    <span class="part-tag">PART 03 · 编码表</span>
+    <h2 class="part-title">类型 × 编码 × 底层结构</h2>
+  </div>
+
+<section>
+  <h2>同一张「类型 × 编码」全景图</h2>
+  <p class="sub">这张表贯穿全部笔记：<strong>type</strong> 决定命令行为（横向一行），<strong>encoding</strong> 决定内存形态（横向一格）。每个类型页从自己的行讲起，共享结构页横向复用。</p>
+  <div class="card" style="overflow-x:auto;">
+    <table class="prob" style="min-width: 700px;">
+      <thead>
+        <tr><th>type</th><th>可选 encoding</th><th>底层结构</th><th>何时选</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="q">string</td>
+          <td><code>int</code> / <code>embstr</code> / <code>raw</code></td>
+          <td>无（值内联） / <a href="sds.html">SDS</a></td>
+          <td>数字≤20字符 → int；≤44字节 → embstr；其余 → raw。见 <a href="../string.html">string.html</a></td>
+        </tr>
+        <tr>
+          <td class="q">list</td>
+          <td><code>quicklist</code></td>
+          <td>双向链表 + <a href="listpack.html">listpack</a> 节点</td>
+          <td>所有 list 统一 quicklist（7.0 起）。见 <a href="../list.html">list.html</a></td>
+        </tr>
+        <tr>
+          <td class="q">hash</td>
+          <td><code>listpack</code> / <code>hashtable</code></td>
+          <td><a href="listpack.html">listpack</a> / <a href="dict.html">dict</a></td>
+          <td>字段数 &lt; 128 且值 < 64 B → listpack；否则 dict。见 <a href="../hash.html">hash.html</a></td>
+        </tr>
+        <tr>
+          <td class="q">set</td>
+          <td><code>intset</code> / <code>hashtable</code></td>
+          <td>intset（有序整数数组）/ <a href="dict.html">dict</a></td>
+          <td>全整数且 ≤ 512 个 → intset；否则 dict。见 <a href="../set.html">set.html</a></td>
+        </tr>
+        <tr>
+          <td class="q">zset</td>
+          <td><code>listpack</code> / <code>skiplist</code></td>
+          <td><a href="listpack.html">listpack</a> / 跳跃表 + <a href="dict.html">dict</a></td>
+          <td>元素 &lt; 128 且值 < 64 B → listpack；否则跳表+字典双结构。见 <a href="../zset.html">zset.html</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note"><strong>编码只与「值」有关，与类型语义正交</strong>：同一个 hash，小的时候用 listpack（连续内存、省指针），大了用 dict（O(1) 随机访问）。类型不变、命令不变，变的只是内存结构——这就是 encoding 字段存在的理由：把「语义类型」与「内存形态」解耦。</div>
+</section>
+
+  <div class="part-head" id="part-4">
+    <span class="part-tag">PART 04 · 指针</span>
+    <h2 class="part-title">ptr 的两种用法 · 共享整数</h2>
+  </div>
+
+<section>
+  <h2>ptr 字段的两个世界观</h2>
+  <p class="sub">ptr 是「数据在哪」的答案，但答案可能不是地址——这取决于 encoding。</p>
+  <div class="card memcard">
+    <div class="memlabel">① int 编码——值本身塞进指针（storage in pointer）</div>
+    <div class="mem">
+      <div class="seg seg-amber" style="flex: 1 1 auto;"><span>ptr 字段</span><code>(void*)12345</code><span class="free">这「不是」地址，就是整数本身</span></div>
+    </div>
+    <span class="arrow">读取时 <code>(long long)ptr</code> 直接取回 12345——零额外 malloc、零间接寻址。整个 robj 16 字节即全部，这也是 <code>INCR</code> 快的秘密</span>
+
+    <div class="memlabel">② embstr / raw 编码——ptr 指向外部数据</div>
+    <div class="mem">
+      <div class="seg seg-blue" style="flex: 0 0 84px;"><span>ptr 字段</span><code>——▶</code></div>
+      <div class="seg seg-green" style="flex: 1 1 auto;"><span>指向</span><code>SDS / 结构体</code><span class="free">真正的一个内存地址</span></div>
+    </div>
+    <span class="arrow">数据活在别处（embstr 与 robj 同块、raw 分两块），读值要 ptr → SDS → 数据两跳</span>
+    <div class="note" style="margin-top:16px;">为什么 int 能内联、字符串不行？<code>long long</code> 恰好 8 字节 = 指针宽度，值可以完整装进 ptr 字段；字符串可长可短（"a" 到 10MB），装不下，只能让 ptr 指出去。这就是「小对象内联」的判据：宽度等于一个指针、创建后不变的东西，就地嵌进去，别绕一圈找外面的地址。</div>
+  </div>
+
+  <div class="card">
+    <span class="memlabel" style="margin-top:0;">共享整数：0 ~ 9999 不必各持一份</span>
+    <p>server 启动时预建 0~9999 的 10000 个共享 robj（<code>OBJ_SHARED_INTEGERS</code>）。命令产生的小整数（如 <code>INCR counter</code> 的结果）不新建对象，而是直接复用共享表里的现成对象、<code>refcount</code> +1；引用归零才真正释放。于是同一个 <code>1</code> 出现在 100 万个 key 里，内存里只有这 1 份。</p>
+    <p style="font-size:13.5px;"><strong>生命周期提示：</strong>共享对象 <code>refcount</code> 只增不减到 0（永不可销毁，因为共享表一直持有引用）——这是 refcount 机制里唯一的「特权对象」。</p>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="navlinks">
+    <a href="../index.html">← 目录</a>
+    <a href="sds.html">SDS 结构 · sds.html ←</a>
+    <a href="../string.html">String 类型 · string.html →</a>
+  </div>
+  Redis 自学笔记 · robj（src/object.h）—— 所有类型的统一外壳
+</footer>
+
+</body>
+</html>

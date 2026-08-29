@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis Hash 类型</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge">Redis · Hash</span>
+    <h1>Hash —— 字段级操作的映射</h1>
+    <p class="lead">一个 key 装着 field → value 的映射，是 Redis 里最接近「对象」的表达。它有两级编码：<strong>小对象</strong>（≤128 字段且值小）用 <a href="internals/listpack.html">listpack</a> 一块连续内存塞进去；<strong>大对象</strong>切换到 <a href="internals/dict.html">dict</a>，换来 O(1) 的单字段查改。</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="toc">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">命令 · 对象语义</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">编码</div><div class="desc">listpack → dict 的切换</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">为什么</div><div class="desc">两阶段的本质是内存换速度</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">场景</div><div class="desc">对象缓存 · 计数聚合</div></a>
+  </div>
+
+  <div class="part-head" id="part-1">
+    <span class="part-tag">PART 01 · 是什么</span>
+    <h2 class="part-title">Hash 概述</h2>
+  </div>
+
+<section>
+  <h2>一个 key 一张小地图</h2>
+  <p class="sub">「field 是纵向的、value 是行」——没有全局 key(list 的元素可重复、hash 的 field 唯一)、字段独立可动。</p>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th>语义</th><th>命令</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q">设置 / 读取</td><td><code>HSET</code>（可一次多字段）· <code>HGET</code> · <code>HMGET</code>（一次多字段）</td></tr>
+        <tr><td class="q">全部取出</td><td><code>HGETALL</code> · <code>HKEYS</code> · <code>HVALS</code> · <code>HSCAN</code>（游标，不阻塞）</td></tr>
+        <tr><td class="q">数字</td><td><code>HINCRBY</code> / <code>HINCRBYFLOAT</code>（字段级自增）</td></tr>
+        <tr><td class="q">删除 / 计数</td><td><code>HDEL</code> · <code>HEXISTS</code> · <code>HLEN</code></td></tr>
+        <tr><td class="q">步进值</td><td><code>HGETRANGE</code> / <code>HSETRANGE</code>（偶用，字段值本质还是字符串）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note"><strong>提醒：</strong>hash 的 value 与 string 的 value 同规格——任意字节、可数字自增。hash 真正不同于 list/set 的是「<strong>字段级</strong>」那三个字：一次只改一个字段，网络往返与内存拷贝都按字段大小量级,不做全对象序列化。</div>
+</section>
+
+  <div class="part-head" id="part-2">
+    <span class="part-tag">PART 02 · 编码</span>
+    <h2 class="part-title">listpack → dict：一次「升级」</h2>
+  </div>
+
+<section>
+  <h2>切换阈值与方向</h2>
+  <p class="sub">创建时是小对象（连续内存，listpack）；字段 ≥ 128 个或任一字段值 ≥ 64 B 时，自动换成大对象（dict）。转变<strong>单向、不可逆</strong>。</p>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th></th><th>小对象 · listpack 编码</th><th>大对象 · dict 编码</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="q">结构</td>
+          <td>一块连续内存，节点顺序即字段顺序</td>
+          <td>哈希表（实为 <code>OBJ_ENCODING_HT</code>），无序</td>
+        </tr>
+        <tr>
+          <td class="q">读一个字段</td>
+          <td>O(n) 线性扫描——n 小时约等于 O(1)</td>
+          <td>均摊 O(1)</td>
+        </tr>
+        <tr>
+          <td class="q">内存</td>
+          <td>字段与值 1~9 字节起（见 <a href="internals/listpack.html">listpack</a>）</td>
+          <td>dictEntry + robj + 键值两个 SDS ≈ 几十字节一条</td>
+        </tr>
+        <tr>
+          <td class="q">触发条件</td>
+          <td><code>hash-max-listpack-entries</code>（默认 128）且 <code>hash-max-listpack-value</code>（默认 64 B）以内</td>
+          <td>任一条件超出</td>
+        </tr>
+        <tr>
+          <td class="q"><code>HGETALL</code> 返回序</td>
+          <td>插入序</td>
+          <td>哈希序（不稳定）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card memcard" style="margin-top:16px;">
+    <div class="memlabel">同一个 hash，两种形态（字段 a=1, b=2, c=3）</div>
+    <div class="memlabel">① listpack 形态 —— 一条连续的字节串</div>
+    <div class="mem" style="flex-wrap: wrap;">
+      <div class="seg seg-red" style="flex: 0 0 64px;"><code>a</code><span>field</span></div>
+      <div class="seg seg-amber" style="flex: 0 0 40px;"><code>1</code></div>
+      <div class="seg seg-red" style="flex: 0 0 64px;"><code>b</code><span>field</span></div>
+      <div class="seg seg-amber" style="flex: 0 0 40px;"><code>2</code></div>
+      <div class="seg seg-red" style="flex: 0 0 64px;"><code>c</code><span>field</span></div>
+      <div class="seg seg-amber" style="flex: 0 0 40px;"><code>3</code></div>
+    </div>
+    <span class="arrow">↑ 六个小条目串成一块；整数直接进编码体（1、2、3 各 1 字节）——没有对象头、没有指针、没有按键分桶</span>
+
+    <div class="memlabel">② dict 形态 —— 链式哈希,字段独立包装</div>
+    <div class="mem">
+      <div class="seg seg-green" style="flex: 0 0 90px;"><span>桶位</span><code>a → b → c</code></div>
+      <div class="seg seg-amber" style="flex: 0 0 90px;"><span>每字段</span><code>dictEntry</code></div>
+      <div class="seg seg-red" style="flex: 0 0 90px;"><span>值</span><code>robj→SDS</code></div>
+      <div class="seg seg-null" style="flex: 1 1 auto;"><code>…</code><span class="free">哈希序</span></div>
+    </div>
+    <span class="arrow">↑ 单字段定位即桶位 + 链扫。迁移就是……复制一份 dict？不——是渐进式的（见 <a href="internals/dict.html">dict.html</a>），被拆碎成每条命令的零头</span>
+  </div>
+</section>
+
+  <div class="part-head" id="part-3">
+    <span class="part-tag">PART 03 · 为什么</span>
+    <h2 class="part-title">两阶段设计的本质</h2>
+  </div>
+
+<section>
+  <h2>为什么不能只用 dict</h2>
+  <p class="sub">直接回答：小 hash 用 dict 会亏在三处——</p>
+  <div class="fields">
+    <div class="field">
+      <h3>1. 常数成本不对称</h3>
+      <div class="type">哈希也不是零成本</div>
+      <p>dict 查一个字段 = 算哈希 + 桶位 + 链扫，而 listpack 内几个字段就是……线性扫下一个内存。n=3 时谁的「O(1)」更快，没有悬念。</p>
+    </div>
+    <div class="field">
+      <h3>2. 哈希序不可预期</h3>
+      <div class="type">listpack 是稳定的插入序</div>
+      <p><code>HGETALL</code> 的返回顺序 listpack 版本是插入序（可预期、可依赖），dict 版是哈希序（依赖哈希函数与 rehash 状态）。对做「散列展示」的客户端，前者白送的可预期性。</p>
+    </div>
+    <div class="field">
+      <h3>3. 每字段的固定开销</h3>
+      <div class="type">dictEntry + robj + 两个对象</div>
+      <p>dict 版每字段：dictEntry（指针若干）+ robj（16 B）+ key SDS + value SDS，3 个字段的 hash 至少 ~90 字节；listpack 版同样的 3 字段约 18 字节。这是数量级差异，不是常数差异。</p>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <span class="memlabel" style="margin-top:0;">为什么不缩回（单向转换）</span>
+    <p style="font-size:14px;">因为 listpack 的「重建」= 重新遍历 + 判断 + 重新编码、dict 的「缩回去」= …… 有没有那个编码,源码里都没有实现「dict → listpack」的回程。设计取向:hash 变大的趋势一旦触发,就给它定「大 hash 一生」——回不到小对象编码,省掉了「频繁振荡」的兑换退路。</p>
+    <p style="font-size:13.5px;"><strong>同款翻版</strong>：zset 同样「listpack → skiplist+dict」单向；set 的 intset → dict 单向。一个模式:小→大承诺不可逆,用「容忍小对象稍慢」换「省掉反向迁移逻辑」。</p>
+  </div>
+</section>
+
+  <div class="part-head" id="part-4">
+    <span class="part-tag">PART 04 · 场景</span>
+    <h2 class="part-title">使用姿势</h2>
+  </div>
+
+<section>
+  <h2>场景与注意事项</h2>
+  <p class="sub">都围绕"字段级读写、局部更新"这个特点。</p>
+  <div class="chips">
+    <span class="chip">用户对象缓存（比 JSON 字符串快）</span>
+    <span class="chip">商品字段集（可变字段）</span>
+    <span class="chip">计数器分组（HINCRBY 按字段）</span>
+    <span class="chip">稀疏属性（大部分用户只有少量字段）</span>
+  </div>
+  <div class="card" style="margin-top:18px;">
+    <span class="memlabel" style="margin-top:0;">为什么「Hash 存对象」优于「JSON 字符串存对象」</span>
+    <ul>
+      <li><strong>读单个字段</strong>：hash 走 HGET 只取一个字段;JSON 版要 GET + 反序列化整个对象 + 自己 cut。</li>
+      <li><strong>改单个字段</strong>：hash HSET 原地;JSON 版 GET 全量→改→SET 全量（网络 + CPU 双浪费）。</li>
+      <li><strong>前提</strong>:字段都是独立同源、值小。若对象是「整体读写型」或者字段很大(10MB 图片),hash 反而没有优势——字段值本质还是字节。</li>
+    </ul>
+    <p style="font-size:13.5px;"><strong>注意：hash 的 field / value 仍是「字节串」</strong>——语义与 String 类型相同（你甚至能对字段值做小字符串处理）。区别只在容器:小值以裸字节内嵌在 listpack 里,不包 robj;大值则在 dict 侧以 robj 挂在字段上。所以 hash 省也不是没有代价,省在「不经过 robj 那一层」。</p>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="navlinks">
+    <a href="index.html">← 目录</a>
+    <a href="internals/listpack.html">listpack · listpack.html →</a>
+    <a href="internals/dict.html">dict · dict.html →</a>
+    <a href="set.html">下一类型 · set.html →</a>
+  </div>
+  Redis 自学笔记 · Hash 类型（listpack → dict 两阶段）
+</footer>
+
+</body>
+</html>

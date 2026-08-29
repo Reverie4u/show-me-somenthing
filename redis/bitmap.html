@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis Bitmap · 位图</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge">Redis · Bitmap</span>
+    <h1>Bitmap —— String 的位视图</h1>
+    <p class="lead"><strong>它不是一种数据类型。</strong>Bitmap 只是 <code>SETBIT</code>/<code>GETBIT</code>/<code>BITCOUNT</code>/<code>BITOP</code> 这组命令把 String 当位数组用：底层字符串的每一位都是一个索引位。是 String，不是新类型。</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="toc">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">一位一个索引 · 命令</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">场景</div><div class="desc">每日活跃 · 并集统计</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">与 String</div><div class="desc">底层就是 SDS · 稀疏开销</div></a>
+  </div>
+
+  <div class="part-head" id="part-1">
+    <span class="part-tag">PART 01 · 是什么</span>
+    <h2 class="part-title">把一个字节掰成 8 个位来用</h2>
+  </div>
+
+<section>
+  <h2>位的世界里，一段 String 就是一张海量开关表</h2>
+  <p class="sub">比如"用户 12345 今天是否活跃"——不用存一个用户 ID 集合，只需把第 12345 位设为 1。1000 万用户 1 个字节都不浪费：<strong>1000 万 bit = 1.25 MB</strong>，而存 1000 万个元素 ID 的 set 要 100 MB 量级。</p>
+  <div class="card memcard">
+    <div class="memlabel">内存形态：一个 key 就是一句话的二进制位</div>
+    <div class="mem" style="flex-wrap: wrap;">
+      <div class="seg seg-green" style="flex: 1 1 100%;"><span>bitmap key（String / SDS）</span><span class="c">… 0 1 0 0 1 1 0 1</span></div>
+      <div class="seg seg-amber" style="flex: 0 0 64px;"><span>offset</span><code>0</code></div>
+      <div class="seg seg-amber" style="flex: 0 0 64px;"><span>offset</span><code>1</code></div>
+      <div class="seg seg-amber" style="flex: 0 0 64px;"><span>offset</span><code>2</code></div>
+      <div class="seg seg-null" style="flex: 1 1 40%;"><span>…</span></div>
+    </div>
+    <span class="arrow">↑ 每个 offset 是 string 里的第 N 位(第 N/8 字节的第 N%8 位)。offset 范围 0 ~ 2³²-1 ——所以单个 bitmap 最大 512 MB,与 String 上限一致(根源相同)。</span>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <table class="prob">
+      <thead>
+        <tr><th>命令</th><th>作用（一句话）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q"><code>SETBIT key offset 0|1</code></td><td>置第 <code>offset</code> 位；offset 大时字符串自动按需增长</td></tr>
+        <tr><td class="q"><code>GETBIT key offset</code></td><td>读第 <code>offset</code> 位；超出范围返回 0</td></tr>
+        <tr><td class="q"><code>BITCOUNT key [start end]</code></td><td>数「1」的个数；可限定字节区间(配合每天位图很常用)</td></tr>
+        <tr><td class="q"><code>BITPOS key 0|1 [start [end]]</code></td><td>找第一个 0/1 的位置——求「最早出现」</td></tr>
+        <tr><td class="q"><code>BITOP AND|OR|XOR|NOT dst src…</code></td><td>多个位图做位运算写进目标键：多天并集、交集就是这么算的</td></tr>
+        <tr><td class="q"><code>BITFIELD key get|set|incrby …</code></td><td>按「字段式」访问位区间(把位图当定宽整数数组,如每 8 位一个计数)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  <div class="part-head" id="part-2">
+    <span class="part-tag">PART 02 · 场景</span>
+    <h2 class="part-title">每日活跃与复合统计</h2>
+  </div>
+
+<section>
+  <h2>经典打法：一天一张位图</h2>
+  <p class="sub">最常见也最朴素的设计:每用户固定一个 offset(user id 映射到 0 ~ N-1),每张活跃统计一个 key。</p>
+  <div class="grow">
+    <div class="card">
+      <div class="step">
+        <div class="n">1</div>
+        <div>
+          <h4>记录每日活跃</h4>
+          <p><code>SETBIT act:2026-08-01 12345 1</code>(用户 12345 当天访问);无访问的位保持 0——不用写。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div>
+          <h4>统计单日</h4>
+          <p><code>BITCOUNT act:2026-08-01</code> → 当日活跃人数。1.25MB 的位图,一次即可。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div>
+          <h4>统计复合区间</h4>
+          <p><code>BITOP OR act:week:31 act:2026-08-01 act:2026-08-02 … act:2026-08-07</code> → <code>BITCOUNT</code> 出「本周活跃」;7 月 → 31 天。</p>
+        </div>
+      </div>
+    </div>
+    <div class="card memcard">
+      <div class="memlabel">内存账本(1000 万用户)</div>
+      <div class="mem">
+        <div class="seg seg-amber" style="flex: 1 1 100%;"><span>每日位图</span><code>10,000,000 bit</code><span class="free">= 1.25 MB</span></div>
+      </div>
+      <div class="mem" style="margin-top:6px;">
+        <div class="seg seg-green" style="flex: 1 1 100%;"><span>一年</span><code>365 × 1.25 MB</code><span class="free">≈ 456 MB</span></div>
+      </div>
+      <div class="mem" style="margin-top:6px;">
+        <div class="seg seg-red" style="flex: 1 1 100%;"><span>同一数据的 set<code>1000 万 ID</code></span><span class="free">≈ 100+ MB / 天</span></div>
+      </div>
+      <span class="arrow">↑ 省 80 倍起步；且能直接做位运算（并集/交集），不用把数据捞到客户端算。</span>
+    </div>
+  </div>
+  <div class="note"><strong>用户 id 怎么映射?——两个常见方案：</strong>① 自增 id 直接当 offset(0 起始);② 已存在百万级用户时,`SETBIT` 前先查一个 db 自增映射。无论如何,关键是 id → offset 的映射要稳定。</div>
+</section>
+
+  <div class="part-head" id="part-3">
+    <span class="part-tag">PART 03 · 与 String</span>
+    <h2 class="part-title">底层就是 SDS，别无他物</h2>
+  </div>
+
+<section>
+  <h2>一切复用 String 的存储</h2>
+  <p class="sub">BitMap 不是 `type` 一枚值(没有 OBJ_BITMAP)——它从头到尾就是 type=STRING 的 value,占着 SDS 的内存,只是"命令解释器"换成了认识位的。</p>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th></th><th>普通 String</th><th>Bitmap 视角下的同一个值</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q"><code>OBJECT ENCODING</code></td><td>INT / EMBSTR / RAW</td><td>一样。位操作会直接把 int/embstr 转 raw<br>（需要随机字节写入）</td></tr>
+        <tr><td class="q">底层结构</td><td><a href="internals/sds.html">SDS</a></td><td>SDS</td></tr>
+        <tr><td class="q">最大体积</td><td>512 MB</td><td>2³² bit——来自同一个 <code>proto-max-bulk-len</code> 限制</td></tr>
+        <tr><td class="q">边界</td><td>二进制安全</td><td>位即字节,天然安全——所以位图就是"人话版本"的二进制字符串</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <span class="memlabel" style="margin-top:0;">什么时候别用位图</span>
+    <ul>
+      <li><strong>稀疏数据：</strong>如果说 1 亿用户里只有 138 个活跃,<code>SETBIT key 99999998 1</code> 会瞬间把 key 撑到 12.5 MB(offset/8)。稀疏时用 set / HLL 更宜。</li>
+      <li><strong>需要精确"交集"而用户量大：</strong>BITOP OR 对 7 个 1.25MB 值是 8.75MB 拷贝,内存反而贵。备选:<code>BITFIELD</code>, 或在应用侧 "先设 BITCOUNT 粗筛"。</li>
+      <li><strong>无法与 HyperLogLog 混用：</strong>bitmap 是"精确的成员判断",HLL 是"近似的基数估算"——一个是地图,一个是计数,别混。</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="navlinks">
+    <a href="index.html">← 目录</a>
+    <a href="string.html">String 类型 · string.html →</a>
+    <a href="hyperloglog.html">兄弟视图 · HLL →</a>
+  </div>
+  Redis 自学笔记 · Bitmap —— String 位视图（非独立类型）
+</footer>
+
+</body>
+</html>

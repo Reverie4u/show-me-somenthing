@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis Stream 类型</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge">Redis · Stream</span>
+    <h1>Stream —— 第六种类型,消息日志</h1>
+    <p class="lead">Redis 5.0 引入的<strong>真正新类型</strong>(type=OBJ_STREAM):一条只追加的消息日志,每个条目有全局 ID(毫秒时间戳 + 序号),自带<strong>消费组</strong>——多消费者分工、内存记录"已投未确认"、可精确回溯。官方给消息队列场景的推荐方案。</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="toc">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">ID · 命令概览</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">存储</div><div class="desc">rax 索引 + listpack 块</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">消费</div><div class="desc">组 · PEL · ack 恢复</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">对比</div><div class="desc">Stream vs List 队列</div></a>
+  </div>
+
+  <div class="part-head" id="part-1">
+    <span class="part-tag">PART 01 · 是什么</span>
+    <h2 class="part-title">事件日志:序号 + 交付跟踪</h2>
+  </div>
+
+<section>
+  <h2>命令概览</h2>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th>命令</th><th>作用（一句话）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q"><code>XADD key [maxlen …] id field val…</code></td><td>追加一条消息;ID 缺省用 <code>*</code>(自动:毫秒 + 同毫秒内自增序号)</td></tr>
+        <tr><td class="q"><code>XRANGE / XREVRANGE key [id1 id2] [COUNT n]</code></td><td>按 ID 范围读取(可空区间取全部);XRANGE 是正、XREVRANGE 是倒</td></tr>
+        <tr><td class="q"><code>XLEN key</code></td><td>消息条数(快:stored 统计位)</td></tr>
+        <tr><td class="q"><code>XREAD [COUNT n] [BLOCK ms] key id</code></td><td><strong>单消费者</strong>读:从"上次的 ID"求增量,支持阻塞;多 key 同时读</td></tr>
+        <tr><td class="q"><code>XREADGROUP GROUP g c [COUNT n] [BLOCK ms] key id</code></td><td><strong>消费者组</strong>读:同一组内消息只被投递一次;ID 用 <code>&gt;</code>(新消息)或任意 ID(重读 pending)</td></tr>
+        <tr><td class="q"><code>XACK key g id…</code></td><td>确认已处理——移出 PEL(已投递未确认表)</td></tr>
+        <tr><td class="q"><code>XPENDING / XCLAIM / XAUTOCLAIM</code></td><td>查看 PEL / 认领超时未 ack 的消息(7.0 起 <code>XAUTOCLAIM</code> 更简洁)</td></tr>
+        <tr><td class="q"><code>XDEL / XTRIM / XGROUP CREATE</code></td><td>按 ID 精确删除 / 按 MAXLEN 裁剪 / 开组</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note"><strong>ID 的双重角色</strong>:<code>ms-seq</code>(如 <code>1699999999999-5</code>)既是唯一的"消息编号",又是"时间顺序标签"——XADD 一个 <code>*</code> 就配好了;客户端也可以传自己的 ID(单调即可)。这让"断点续读"变成一条命令:<code>XREAD key last_id</code>。</div>
+</section>
+
+  <div class="part-head" id="part-2">
+    <span class="part-tag">PART 02 · 存储</span>
+    <h2 class="part-title">rax 索引 + listpack 块</h2>
+  </div>
+
+<section>
+  <h2>一棵索引树管住一整片 listpack</h2>
+  <p class="sub">Stream 的结构是 redis 对象里"最接近数据库"的：<strong>列表块 + 索引 + 元信息</strong>三明治。数据本身躺在按批次打包的 listpack 里(每块默认 100 条消息),一个 rax(基数树)按 ID 索引到每一块。</p>
+  <div class="card memcard">
+    <div class="memlabel">结构草图</div>
+    <div class="mem" style="flex-wrap: wrap;">
+      <div class="seg seg-amber" style="flex: 0 0 72px;"><code>stream</code><span>元信息</span></div>
+      <div class="seg seg-blue" style="flex: 0 0 120px;"><code>rax</code><span>ID 索引树</span></div>
+      <div class="seg seg-red" style="flex: 0 0 110px;"><code>listpack₁</code><span>≤100 条</span></div>
+      <div class="seg seg-red" style="flex: 0 0 110px;"><code>listpack₂</code><span>≤100 条</span></div>
+    </div>
+    <span class="arrow">↑ 一级数据是"块",索引是"树"。这样 ID 定位 O(log 块数),块内线性;7.0 起块编码是 <a href="internals/listpack.html">listpack</a>(之前是 ziplist)——为什么不是一条消息一次 malloc?正解:消息都是小 KV,一个 block 里 100 条,内存与查找的成本都最小化</span>
+
+    <div class="memlabel">元信息里存什么</div>
+    <ul style="font-size:13.5px; margin-top:4px; padding-left:20px;">
+      <li>消息总数(让 XLEN 是 O(1))与最大 ID ——读者一眼看到"到哪了"</li>
+      <li>消费组列表(组名 → 组结构):组里记录 <code>last_delivered_id</code>(下一条新消息的位置)</li>
+      <li>每个组的 <strong>PEL</strong>(Pending Entries List):"已投给消费者但还没 XACK"的消息 ID 表——这是"消息至少一次"语义的全部底气</li>
+      <li>每个消费者在 PEL 里的所有权标记</li>
+    </ul>
+    <div class="note" style="margin-top:10px;"><strong>牺牲点:</strong>Stream 不自动删已读消息——它是日志(只追加)。想"处理完就丢",用 <code>XTRIM MAXLEN ~ 5000</code> 或 XADD MAXLEN(近似裁剪,效率高)。</div>
+  </div>
+</section>
+
+  <div class="part-head" id="part-3">
+    <span class="part-tag">PART 03 · 消费</span>
+    <h2 class="part-title">消费者组:分工 + 断点重来</h2>
+  </div>
+
+<section>
+  <h2>三步流水线</h2>
+  <div class="grow">
+    <div class="card">
+      <div class="step">
+        <div class="n">1</div>
+        <div>
+          <h4>开组</h4>
+          <p><code>XGROUP CREATE events workers $</code>(从新消息开始)或 <code>0</code>(从头)——组内所有消费者共享"还投给谁"的一张发报表</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div>
+          <h4>读</h4>
+          <p><code>XREADGROUP GROUP workers alice COUNT 10 BLOCK 5000 key &gt;</code>——新消息只被组内一人拿到(round-robin 顺序),<strong>失败重试不会重复投出</strong>……</p>
+          <div class="change">但注意:进程崩溃后,PEL 里它的消息还在——这就是"至少一次"的来源</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div>
+          <h4>确认</h4>
+          <p><code>XACK events workers 1699999999999-5</code>——从 PEL 删除。被 ack 过的消息才算"已消耗";超时未 ack 的,<code>XAUTOCLAIM</code> 认领给别的消费者重试</p>
+        </div>
+      </div>
+    </div>
+    <div class="card memcard">
+      <div class="memlabel">为什么这个"组"重要</div>
+      <div class="mem">
+        <div class="seg seg-green" style="flex: 1 1 100%;"><span>投递但没有 ack</span><code>PEL 表</code><span class="free">组内每个消费者记一笔</span></div>
+      </div>
+      <div class="mem" style="margin-top:6px;">
+        <div class="seg seg-amber" style="flex: 1 1 100%;"><span>崩溃恢复</span><code>XPENDING → XAUTOCLAIM</code><span class="free">超时消息认领重投,不丢</span></div>
+      </div>
+      <span class="arrow">↑ 对比 List 队列的 <code>BRPOP</code>:弹出即"消失",崩溃即丢。Stream 把"消费发生"与"处理完成"分开成两件事——这是它作为消息中间件的核心卖点。</span>
+    </div>
+  </div>
+</section>
+
+  <div class="part-head" id="part-4">
+    <span class="part-tag">PART 04 · 对比</span>
+    <h2 class="part-title">Stream 与 List 队列的取舍</h2>
+  </div>
+
+<section>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th></th><th>List 当队列</th><th>Stream</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q">投递</td><td><code>LPUSH</code> + <code>BRPOP</code>，取出即删</td><td><code>XADD</code> / <code>XREADGROUP</code>，取出仍在(可重读)</td></tr>
+        <tr><td class="q">确认</td><td>无——"弹出"就是确认</td><td><code>XACK</code>，PEL 记录待确认</td></tr>
+        <tr><td class="q">失败恢复</td><td>丢消息</td><td><code>XAUTOCLAIM</code> 转移给他人</td></tr>
+        <tr><td class="q">回溯</td><td>不可</td><td>XRANGE 精确到 ID(日志意义)</td></tr>
+        <tr><td class="q">成本</td><td>极轻(quicklist)</td><td>重一档(rax + PEL 表)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="fields" style="margin-top:12px;">
+    <div class="field">
+      <h3>什么时候用 List</h3>
+      <div class="type">简单任务队列</div>
+      <p>"老板派活、干完走人"：pop 就是交付，不需事后检查、不用重放。消息丢了认了。</p>
+    </div>
+    <div class="field">
+      <h3>什么时候用 Stream</h3>
+      <div class="type">事件流 / 消费组</div>
+      <p>多消费者分摊任务、业务侧要补偿重试、要"一份日志"可重放记账、或者推送数据流(XADD+XREAD BLOCK 就是精悍的 pub/sub)。</p>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="navlinks">
+    <a href="index.html">← 目录</a>
+    <a href="hyperloglog.html">HLL · hyperloglog.html ←</a>
+    <a href="internals/listpack.html">块编码 · listpack.html →</a>
+  </div>
+  Redis 自学笔记 · Stream（type=OBJ_STREAM，Redis 5.0+）
+</footer>
+
+</body>
+</html>

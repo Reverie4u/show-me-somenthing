@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis ZSet 类型</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge">Redis · ZSet</span>
+    <h1>ZSet —— 带着分数排队的集合</h1>
+    <p class="lead">每个元素携带 <code>score</code>,永远按它排好序。五种类型里结构最戏剧化:<strong>小</strong>对象的编码是 listpack;一旦长大,变成 <strong>skiplist + dict 双结构</strong>——一个管「按分数走」,一个管「按成员找」,双写一致地维持。</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="toc">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">命令 · score · 排名</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">编码</div><div class="desc">listpack → 双结构</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">跳表</div><div class="desc">分层赌 · 概率平衡</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">双结构</div><div class="desc">为什么两个都要</div></a>
+    <a href="#part-5"><div class="num">PART 05</div><div class="name">场景</div><div class="desc">排行榜 · 延迟队列</div></a>
+  </div>
+
+  <div class="part-head" id="part-1">
+    <span class="part-tag">PART 01 · 是什么</span>
+    <h2 class="part-title">ZSet 概述</h2>
+  </div>
+
+<section>
+  <h2>成员唯一,分数任意(可重复),按分数天然有序</h2>
+  <p class="sub">score 类型是 <code>double</code>(实数),成员是字符串。整个集合始终处于「按 score 升序」状态——不需要你 sort。</p>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th>语义</th><th>命令</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q">写入</td><td><code>ZADD</code>(可批量) · <code>ZINCRBY</code>(给分数加数)</td></tr>
+        <tr><td class="q">精确查</td><td><code>ZSCORE</code> / <code>ZMSCORE</code> · <code>ZRANK</code>(升序名次) · <code>ZREVRANK</code></td></tr>
+        <tr><td class="q">范围遍历</td><td><code>ZRANGE</code> / <code>ZREVRANGE</code> · <code>ZRANGEBYSCORE</code> / <code>ZREVRANGEBYSCORE</code> · <code>ZCOUNT</code> · <code>ZLEXCOUNT</code></td></tr>
+        <tr><td class="q">弹出</td><td><code>ZPOPMIN</code> / <code>ZPOPMAX</code> · <code>BZPOPMIN</code> / <code>BZPOPMAX</code>(阻塞版)</td></tr>
+        <tr><td class="q">删除 / 计数</td><td><code>ZREM</code> · <code>ZCARD</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note"><strong>score 是 double:别用来精确计数。</strong>float 的整数上限是 2^53,超过就会丢精度——zset 用于「排名/时间戳」是安全的,用于「精确库存/ID」不是。</div>
+</section>
+
+  <div class="part-head" id="part-2">
+    <span class="part-tag">PART 02 · 编码</span>
+    <h2 class="part-title">listpack → skiplist + dict</h2>
+  </div>
+
+<section>
+  <h2>切换条件与双结构</h2>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th></th><th>小对象 · listpack 编码</th><th>大对象 · skiplist + dict 双结构</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="q">结构</td>
+          <td>连续内存,元素轮流是 [member][score]……</td>
+          <td>跳跃表 + 哈希表,<strong>两个独立结构同时持有全部成员</strong></td>
+        </tr>
+        <tr>
+          <td class="q">触发</td>
+          <td><code>zset-max-listpack-entries</code>(默认 128)且 <code>zset-max-listpack-value</code>(default 64 B)</td>
+          <td>任一超出</td>
+        </tr>
+        <tr>
+          <td class="q"><code>ZRANGE</code> 家族</td>
+          <td>线性扫 listpack——n 小等于白给</td>
+          <td>跳表横走 O(log n + m)</td>
+        </tr>
+        <tr>
+          <td class="q"><code>ZSCORE</code>(按 member 查)</td>
+          <td>线性扫</td>
+          <td>dict 直接命 O(1)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="margin-top:14px;">注意:zset 没有「只跳表」或「只 dict」的版本——大 zset 永远是<strong>跳表(顺序)+ dict(精确)</strong>双持有,这一点和 hash 的「二选一」不同。</p>
+</section>
+
+  <div class="part-head" id="part-3">
+    <span class="part-tag">PART 03 · 跳表</span>
+    <h2 class="part-title">skiplist:概率换来的平衡</h2>
+  </div>
+
+<section>
+  <h2>分层链表,赌出来的对数</h2>
+  <p class="sub">底层是一条完整有序链表;每层各带几根「跳过中间节点」的长指针,让查找从「一步步走」变成「一层层跳」。第 1 层概率上遍历 2 次就知道「往下走还是横着走」。</p>
+  <div class="card memcard">
+    <div class="memlabel">结构(节选)</div>
+    <div class="mem">
+      <div class="seg seg-green" style="flex: 0 0 44px;"><code>L4</code></div>
+      <div class="seg seg-null" style="flex: 0 0 44px;"><code>1</code></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>7</code></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>19</code></div>
+    </div>
+    <div class="mem" style="margin-top:6px;">
+      <div class="seg seg-amber" style="flex: 0 0 44px;"><code>L3</code></div>
+      <div class="seg seg-null" style="flex: 0 0 44px;"><code>1</code></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>7</code></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-null" style="flex: 0 0 44px;"><code>11</code></div>
+    </div>
+    <div class="mem" style="margin-top:6px;">
+      <div class="seg seg-blue" style="flex: 0 0 44px;"><code>L2</code></div>
+      <div class="seg seg-null" style="flex: 0 0 44px;"><code>1</code></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>7</code></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-null" style="flex: 0 0 44px;"><code>11</code></div>
+      <div class="seg seg-null" style="flex: 0 0 36px;"><span>—</span></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>19</code></div>
+    </div>
+    <div class="mem" style="margin-top:6px;">
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>L1</code></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>1</code></div>
+      <div class="seg seg-green" style="flex: 0 0 36px;"><code>4</code></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>7</code></div>
+      <div class="seg seg-green" style="flex: 0 0 36px;"><code>9</code></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>11</code></div>
+      <div class="seg seg-green" style="flex: 0 0 36px;"><code>15</code></div>
+      <div class="seg seg-red" style="flex: 0 0 44px;"><code>19</code></div>
+    </div>
+    <span class="arrow">↑ 查找 15:从 L4 走到 7 → 下一格直接是 19(太大,降层)→ L3 走 7 → 11(下一格过大,降层)… L1 上从 11 走到 15。一眼:降层次数 ≈ 层数 ≈ log n</span>
+    <div class="note" style="margin-top:14px;"><strong>「概率平衡」是怎么来的:</strong>插入时抛硬币——正面加一层,50% 概率一层、25% 两层……严格说是 p=1/4 的几何分布(Redis 用 <code>ZSKIPLIST_P = 0.25</code>,<code>ZSKIPLIST_MAXLEVEL = 32</code>)。每个节点层数随机,「长指针多的人自然爬得高」,期望上每层节点数减半。</div>
+  </div>
+
+  <div class="fields" style="margin-top:16px;">
+    <div class="field">
+      <h3>查找</h3>
+      <div class="type">O(log n) 均摊</div>
+      <p>从最高层开始,向右看:下一格不超过目标就走,超过就降一层。期望跳 1/p 次/层——这是「概率结构」最优雅的抽样。</p>
+    </div>
+    <div class="field">
+      <h3>范围查询</h3>
+      <div class="type">O(log n + m)</div>
+      <p>找到起点后,直接沿底层链表顺序走——<strong>这是跳表对自己最大的奖赏</strong>:ZRANGEBYSCORE 没有任何额外结构,就是「链上散步」。</p>
+    </div>
+    <div class="field">
+      <h3>span + ZRANK</h3>
+      <div class="type">排名就是攒跨度</div>
+      <p>每层指针存 span(跨过多少节点),查 ZRANK 时从左往右累计 span——排名 O(log n),不需要数一遍。</p>
+    </div>
+  </div>
+
+  <div class="case-card" style="margin-top:16px;">
+    <div class="case-head"><span class="case-num">1</span><span class="case-title">为什么是 skiplist 而不是红黑树/跳表?antirez 的选择</span></div>
+    <p>假设换成红黑树/B 树也能做「有序集合」——但跳表赢在三个「适合本场景」的点:实现与调试远比平衡树简单(就是普通链表加概率分层);范围遍历无需中序遍历状态机,找到起点沿链走即可;期望 O(log n) 对 Redis 的规模绰绰有余。antirez 在问到这一选型时反复强调的正是「简单、可调试、正好合适」——这大概是 Redis 整个项目的选型美学。</p>
+    <span class="warn">选「简单」而不是选「最强」:平均时间复杂度相同的地方,可维护性优先。</span>
+  </div>
+</section>
+
+  <div class="part-head" id="part-4">
+    <span class="part-tag">PART 04 · 双结构</span>
+    <h2 class="part-title">一个 zset,两套数据</h2>
+  </div>
+
+<section>
+  <h2>跳表负责「按分数走」,dict 负责「按成员找」</h2>
+  <div class="card memcard">
+    <div class="memlabel">一次 ZADD 会写两处</div>
+    <div class="mem">
+      <div class="seg seg-blue" style="flex: 0 0 84px;"><span>zsl</span><code>——▶</code></div>
+      <div class="seg seg-green" style="flex: 0 0 150px;"><span>skiplist</span><span class="c">score → member</span></div>
+      <div class="seg seg-amber" style="flex: 0 0 84px;"><span>ht</span><code>——▶</code></div>
+      <div class="seg seg-green" style="flex: 0 0 150px;"><span>dict</span><span class="c">member → score</span></div>
+      <div class="seg seg-null" style="flex: 1 1 auto;"><code>…</code><span class="free">同一次分配区域</span></div>
+    </div>
+    <span class="arrow">↑ 每个 value 的 robj 里 encoding=SKIPLIST,ptr 指向 <code>zset { skiplist* zsl; dict* dict; }</code></span>
+
+    <div class="memlabel">拆开看两个结构的「分工」</div>
+    <div class="mem">
+      <div class="seg seg-green" style="flex: 1 1 100%;"><span>skiplist · 序</span><span class="c">ZRANGE / ZRANGEBYSCORE / ZRANK / ZPOPMIN —— 一切「按排名」的操作</span></div>
+    </div>
+    <div class="mem" style="margin-top:6px;">
+      <div class="seg seg-green" style="flex: 1 1 100%;"><span>dict · 精确</span><span class="c">ZSCORE / ZMSCORE / ZREM —— 一切「按成员」的操作;也保证成员唯一、O(1) 找分数</span></div>
+    </div>
+    <span class="arrow">↑ 共同体:每个操作都先知道自己走哪个门——「按分数」走跳表侧的链,「按成员」走 dict 侧……这就是「两个都留」的代价与收益。</span>
+  </div>
+
+  <div class="case-card" style="margin-top:16px;">
+    <div class="case-head"><span class="case-num">1</span><span class="case-title">为什么不能只留一个</span></div>
+    <ul>
+      <li><strong>只有 skiplist:</strong><code>ZSCORE</code>(按 member 查分数)得在跳表上逐个比较 member——成员字符串的字典序,每次 O(log n) 比较 + 内存两跳,不快。</li>
+      <li><strong>只有 dict:</strong><code>ZRANGEBYSCORE</code> 需要<strong>全量排序</strong>——想「从 90 分到 100 分」就得扫全部、排完再截,做不到。</li>
+      <li><strong>都要:</strong>一次写入双维护(两个结构都写或都删),<code>ZADD</code> 的常数翻倍——换来的是「ZSCORE 快 + ZRANGE 快」两全。Redis 只要 ZSET,这个成本它掏得起。</li>
+    </ul>
+    <span class="warn">这就是「二选一」的反面教材——为了「按分数走」和「按成员找」双向都成立,zset 选择付一次双写(写两个结构)的常数成本。</span>
+  </div>
+</section>
+
+  <div class="part-head" id="part-5">
+    <span class="part-tag">PART 05 · 场景</span>
+    <h2 class="part-title">使用姿势</h2>
+  </div>
+
+<section>
+  <h2>场景与注意事项</h2>
+  <p class="sub">都充分利用「按 score 序」这一天然顺序。</p>
+  <div class="chips">
+    <span class="chip">排行榜:ZADD ranks score member,ZREVRANGE 取 TOP-N</span>
+    <span class="chip">延迟队列:score 填执行时间戳;ZRANGEBYSCORE now now+∞ 取到期任务再删</span>
+    <span class="chip">最近动态:时间戳做 score,按时间范围取</span>
+    <span class="chip">统计报告:分桶直方图(score 作为桶索引)</span>
+  </div>
+  <div class="card" style="margin-top:18px;">
+    <span class="memlabel" style="margin-top:0;">延迟队列的常见问题</span>
+    <ul>
+      <li><strong>「取出后谁删」</strong>:用 <code>ZPOPMIN</code> + BZPOPMIN 是唯一合理路径,先取再删的脚本会丢任务。</li>
+      <li><strong>成员与分数是「两份」</strong>:同一 member 更新分数,是双结构双写——若你 10000 个进程同时乱改分数,序列化问题自己排队。</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="navlinks">
+    <a href="index.html">← 目录</a>
+    <a href="internals/listpack.html">listpack · listpack.html →</a>
+    <a href="internals/dict.html">dict · dict.html →</a>
+  </div>
+  Redis 自学笔记 · ZSet 类型（listpack / skiplist + dict）
+</footer>
+
+</body>
+</html>

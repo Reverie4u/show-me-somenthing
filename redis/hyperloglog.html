@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis HyperLogLog · 基数估算</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge">Redis · HLL</span>
+    <h1>HyperLogLog —— 12 KB 数出千万级去重</h1>
+    <p class="lead"><strong>它不是一种数据类型。</strong>HLL 是"有多少个不同元素"的<strong>估算</strong>工具：1000 万个 UV，误差 0.81%（约 ±8 万），固定占 <strong>12 KB</strong>。值本身是普通字符串，内容是一个 HLL 结构体。</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="toc">
+    <a href="#part-1"><div class="num">PART 01</div><div class="name">是什么</div><div class="desc">命令 · 误差</div></a>
+    <a href="#part-2"><div class="num">PART 02</div><div class="name">原理</div><div class="desc">出桶 · 数位 · 取最大</div></a>
+    <a href="#part-3"><div class="num">PART 03</div><div class="name">结构</div><div class="desc">就是一个 String</div></a>
+    <a href="#part-4"><div class="num">PART 04</div><div class="name">边界</div><div class="desc">何时不能用</div></a>
+  </div>
+
+  <div class="part-head" id="part-1">
+    <span class="part-tag">PART 01 · 是什么</span>
+    <h2 class="part-title">去重计数，只回答"大约多少"</h2>
+  </div>
+
+<section>
+  <h2>为什么需要它</h2>
+  <p class="sub">统计"今天有多少个不同用户访问"——精确做法的代价是存下每一个访问者;HLL 用 12 KB 换一个足够准的数字。</p>
+  <div class="card">
+    <table class="prob">
+      <thead>
+        <tr><th>做法</th><th>1000 万 UV 的内存</th><th>准确度</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="q">精确（set 存每个 ID）</td>
+          <td>几百 MB，还占一次性写入的 CPU</td>
+          <td>精确</td>
+        </tr>
+        <tr>
+          <td class="q">HLL（PFADD / PFCOUNT）</td>
+          <td><strong>恒定 12 KB</strong>&nbsp;<em>（误差 0.81% ≈ ±8 万）</em></td>
+          <td>估算</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">绝大多数报表（UV、月活、漏斗）对 ±0.8% 的误差无感，但对精确到个位的场景不适用。</div>
+</section>
+
+<section>
+  <h2>命令速览</h2>
+  <p class="sub">只有三条，且都只操作"估算器"本身，不接触具体元素。</p>
+  <div class="card">
+    <table class="prob" style="margin-bottom:0;">
+      <thead>
+        <tr><th>命令</th><th>作用（一句话）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q"><code>PFADD key elem…</code></td><td>把一批元素"喂"进估算器（键不存在则新建）</td></tr>
+        <tr><td class="q"><code>PFCOUNT key…</code></td><td>估算基数；多个 key 表示"合并后去重"的数量</td></tr>
+        <tr><td class="q"><code>PFMERGE dest src…</code></td><td>把多个估算器合并保存成一个（变久存版）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  <div class="part-head" id="part-2">
+    <span class="part-tag">PART 02 · 原理</span>
+    <h2 class="part-title">把"来过的元素"压成 16384 个数字</h2>
+  </div>
+
+<section>
+  <h2>原理：哈希就是掷硬币</h2>
+  <p class="sub">全部秘密浓缩成一句：<strong>罕见的结果出现了，说明"试了很多次"</strong>。四步讲完。</p>
+  <div class="grow">
+    <div class="card">
+      <div class="step">
+        <div class="n">1</div>
+        <div>
+          <h4>每个元素 = 抛一串硬币</h4>
+          <p>把 64 位哈希当成掷 64 次硬币（0=反面，1=正面）。从低位开始数，<strong>第一个 1 出现在第几位</strong>，记为 <code>k</code>。例：某哈希从低位起的三位是 0、0、1 → <code>k = 3</code>。</p>
+          <div class="change">概率精确为 2⁻ᵏ：一半哈希第一位就是 1（k=1），四分之一第二位才出现（k=2）……k=20 相当于"连抛 19 次反面"，百万分之一</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div>
+          <h4>很多元素里取"最大 k"</h4>
+          <p>给集合里每个元素算 k，记下<strong>最大</strong>的那个（R）。反向推理：出现 k=R 的概率是 2⁻ᴿ，它真的出现了——说明产生了约 2ᴿ 次尝试。所以 <strong>基数 ≈ 2ᴿ</strong>。</p>
+          <div class="change">例：100 万 = 2²⁰ 个独立哈希，预计就有人抛出 k=20 附近；看到 R=20 → 估算约 100 万</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div>
+          <h4>为什么要 16384 个桶</h4>
+          <p>只靠"全局最大 R"太娇气：某个元素碰巧抛出 k=30，估算瞬间变成 10 亿。于是按哈希<strong>低 14 位</strong>把元素分到 16384 个桶，每桶独立记自己的最大 k，最后把 16384 个估算<strong>平均</strong>（调和平均）——单桶的大误差互相抵消，总误差降为 1.04/√16384 ≈ 0.81%。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <div>
+          <h4>合并命令为什么存在</h4>
+          <p>两个估算器的桶号对应取 max 即合并。所以 <code>PFCOUNT uv:today uv:yesterday</code> 一条命令出"近两日合并 UV"，全程没存过任何原始元素。</p>
+        </div>
+      </div>
+    </div>
+    <div class="card memcard">
+      <div class="memlabel">估算器本体：16384 桶 × 6 bit ≈ 12 KB</div>
+      <div class="mem" style="flex-wrap: wrap;">
+        <div class="seg seg-amber" style="flex: 0 0 46px;"><code>[0]</code><span>3</span></div>
+        <div class="seg seg-amber" style="flex: 0 0 46px;"><code>[1]</code><span>1</span></div>
+        <div class="seg seg-amber" style="flex: 0 0 46px;"><code>[2]</code><span>5</span></div>
+        <div class="seg seg-null" style="flex: 1 1 40%;"><span>…</span><span class="free">每桶只存一个 0~51 的小数字</span></div>
+      </div>
+      <span class="arrow">↑ 桶 = 一组独立实验堆：哪个元素进哪个桶由其哈希决定（同一元素永远进同桶），桶里只记"见过的最罕见 k"，不记元素。所以只能加、不能删、取不回成员。</span>
+      <div class="note" style="margin-top:14px;"><strong>数学收尾（理解思路即可）：</strong>每桶估算"数量级"为 2ᵏ，最后做<strong>调和平均</strong>（要求"倒数的平均再取倒数"的一种平均），因为算术平均会被极端桶瞬间拉爆：<code>(64+64+100万)/3 ≈ 35 万</code>，调和平均 <code>3/(1/64+1/64+1/100万) ≈ 96</code>——真实的 ~64，稳。公式 <code>基数 ≈ α·m² / Σ 2^(-k)</code>：<code>m</code> = 桶数（16384），<code>α</code> 是随 m 调整的修正系数，k 平均大 → 基数大。算法出自 Flajolet 2007 论文，名字就是"超级对数计数"。</div>
+    </div>
+  </div>
+</section>
+
+  <div class="part-head" id="part-3">
+    <span class="part-tag">PART 03 · 结构</span>
+    <h2 class="part-title">它就是一张 String</h2>
+  </div>
+
+<section>
+  <h2>值和普通字符串没有区别</h2>
+  <p class="sub"><code>TYPE</code> 返回 <code>string</code>，<code>OBJECT ENCODING</code> 是 raw——因为 HLL 确实是字符串值，只是内容上面附了一张表。</p>
+  <div class="card">
+    <table class="prob" style="margin-bottom:0;">
+      <thead>
+        <tr><th></th><th>HLL 值的构成</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="q">头部</td><td>4 字节魔法 <code>"HYLL"</code> + 1 字节编码标记 + 3 字节保留 + 8 字节缓存基数</td></tr>
+        <tr><td class="q">两种编码</td><td><strong>稀疏</strong>：基数小时大多桶为 0，按游程压缩，只有几百字节；<strong>密集</strong>：满 16384 × 6 bit = 12 KB。升级后就回不去稀疏</td></tr>
+        <tr><td class="q">副作用</td><td>既然是字符串：<code>GET</code>/<code>SET</code> 可整体搬移一个 HLL 值（注意是搬，不是复制两份）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  <div class="part-head" id="part-4">
+    <span class="part-tag">PART 04 · 边界</span>
+    <h2 class="part-title">什么时候别用它</h2>
+  </div>
+
+<section>
+  <div class="fields">
+    <div class="field">
+      <h3>基数很小的时候</h3>
+      <div class="type">几十个以内</div>
+      <p>桶很少被撞，估算偏低估。Redis 有"线性计数修正"兜底（还用小代数公式救回来），但和精确计数比误差仍可感——小基数不如直接 set。</p>
+    </div>
+    <div class="field">
+      <h3>要"取出成员"或"精确"</h3>
+      <div class="type">单向的估算器</div>
+      <p>没有 PFREM；桶里只有最大 k，没有元素本体——"精确知道哪些用户"必须换 set / 位图。HLL 只回答"大约多少"。</p>
+    </div>
+    <div class="field">
+      <h3>和 Bitmap 怎么选</h3>
+      <div class="type">两种统计需求</div>
+      <p>要<strong>查具体某个成员</strong>（"用户 1389 今天来过吗"）→ 位图；只<strong>要一个数字</strong>（UV 报表、漏斗）→ HLL。前者是精确账本，后者是估算师。</p>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="navlinks">
+    <a href="index.html">← 目录</a>
+    <a href="bitmap.html">位图兄弟 · bitmap.html ←</a>
+    <a href="stream.html">Stream · stream.html →</a>
+  </div>
+  Redis 自学笔记 · HyperLogLog —— 基于 String 的近似计数（非独立类型）
+</footer>
+
+</body>
+</html>
